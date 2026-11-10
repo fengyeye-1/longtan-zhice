@@ -1,0 +1,14 @@
+node_modules/
+frontend/node_modules/
+# frontend/dist is required by Dockerfile on Render
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/data/uploads/*
+backend/data/versions/*
+!backend/data/versions/.gitkeep
+.DS_Store
+
+backend/data/projects.sqlite
+backend/data/.session_hmac

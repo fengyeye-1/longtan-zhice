@@ -1,0 +1,241 @@
+{
+  "version": "v82-2026-11-06",
+  "last_checked_at": "2026-11-05",
+  "sources": [
+    {
+      "source_id": "miit-nonferrous-energy-diag-2024",
+      "title": "有色金属行业节能诊断服务指南（2024）",
+      "source_url": "https://www.miit.gov.cn/cms_files/filemanager/1226211233/attach/20246/dedcf5b6c4054fb19474a86999fbdc51.pdf",
+      "issue_date": "2024",
+      "checked_at": "2026-11-04",
+      "model_scope": [
+        "generic",
+        "ball_mill",
+        "pump_drainage"
+      ],
+      "note": "行业指南索引，不自动生成设备效率/价格",
+      "applicable_type_codes": [
+        "generic",
+        "ball_mill",
+        "pump_drainage",
+        "pump_process",
+        "fan_ventilation",
+        "compressor",
+        "crusher",
+        "conveyor",
+        "motor_drive",
+        "transformer",
+        "sag_mill"
+      ],
+      "applicable_method_codes": [
+        "power_drop_hours",
+        "baseline_fraction",
+        "pump_hydraulic",
+        "fan_pressure_flow",
+        "motor_efficiency",
+        "compressor_power_drop",
+        "transformer_losses"
+      ],
+      "parameter_types": [
+        "method_guide"
+      ],
+      "extractable_parameters": []
+    },
+    {
+      "source_id": "gb-19762-2025",
+      "title": "GB 19762—2025 离心泵能效限定值及能效等级",
+      "source_url": "https://openstd.samr.gov.cn/bzgk/std/newGbInfo?hcno=71D054118B5AD7FDAF8F83BCEDA0DA81",
+      "issue_date": "2025",
+      "checked_at": "2026-11-04",
+      "model_scope": [
+        "pump_hydraulic"
+      ],
+      "note": "参数合法范围参考；不得凭能效等级捏造具体效率",
+      "applicable_type_codes": [
+        "pump_drainage",
+        "pump_process"
+      ],
+      "applicable_method_codes": [
+        "pump_hydraulic",
+        "baseline_fraction"
+      ],
+      "parameter_types": [
+        "method_standard"
+      ],
+      "extractable_parameters": []
+    },
+    {
+      "source_id": "gb-19761-2020",
+      "title": "GB 19761—2020 通风机能效限定值及能效等级",
+      "source_url": "https://openstd.samr.gov.cn/bzgk/std/newGbInfo?hcno=E5046802371AE72DD293FF49D92B4913",
+      "issue_date": "2020",
+      "checked_at": "2026-11-04",
+      "model_scope": [
+        "fan_pressure_flow"
+      ],
+      "applicable_type_codes": [
+        "fan_ventilation"
+      ],
+      "applicable_method_codes": [
+        "fan_pressure_flow",
+        "power_drop_hours",
+        "baseline_fraction"
+      ],
+      "parameter_types": [
+        "method_standard"
+      ],
+      "extractable_parameters": []
+    },
+    {
+      "source_id": "gb-19153-2019",
+      "title": "GB 19153—2019 容积式空气压缩机能效限定值及能效等级",
+      "source_url": "https://openstd.samr.gov.cn/bzgk/gb/newGbInfo?hcno=B4CBDEB1530F5C89F3D78E6CB7921FED",
+      "issue_date": "2019",
+      "checked_at": "2026-11-04",
+      "model_scope": [
+        "compressor"
+      ],
+      "applicable_type_codes": [
+        "compressor"
+      ],
+      "applicable_method_codes": [
+        "compressor_power_drop",
+        "baseline_fraction",
+        "power_drop_hours"
+      ],
+      "parameter_types": [
+        "method_standard"
+      ],
+      "extractable_parameters": []
+    },
+    {
+      "source_id": "gb-18613-2020",
+      "title": "GB 18613—2020 电动机能效限定值及能效等级",
+      "source_url": "https://openstd.samr.gov.cn/bzgk/std/newGbInfo?hcno=42E6A7FD8C7E4BD896221D92ABA1709B",
+      "issue_date": "2020",
+      "checked_at": "2026-11-04",
+      "model_scope": [
+        "motor_efficiency"
+      ],
+      "applicable_type_codes": [
+        "motor_drive"
+      ],
+      "applicable_method_codes": [
+        "motor_efficiency",
+        "power_drop_hours"
+      ],
+      "parameter_types": [
+        "method_standard"
+      ],
+      "extractable_parameters": []
+    },
+    {
+      "source_id": "mee-gansu-grid-factor-2023",
+      "title": "2023年电力排放因子公告（甘肃平均 0.4471 kgCO₂/kWh）",
+      "source_url": "https://www.mee.gov.cn/xxgk2018/xxgk/xxgk01/202512/t20251231_1139517.html",
+      "issue_date": "2023",
+      "checked_at": "2026-11-04",
+      "model_scope": [
+        "carbon"
+      ],
+      "value_note": "0.4471 kgCO2/kWh；电力相关减排情景，非核证",
+      "applicable_type_codes": [
+        "generic",
+        "ball_mill",
+        "pump_drainage",
+        "pump_process",
+        "fan_ventilation",
+        "compressor",
+        "crusher",
+        "conveyor",
+        "motor_drive",
+        "transformer",
+        "sag_mill"
+      ],
+      "applicable_method_codes": [
+        "power_drop_hours",
+        "baseline_fraction",
+        "pump_hydraulic",
+        "fan_pressure_flow",
+        "motor_efficiency",
+        "compressor_power_drop",
+        "transformer_losses"
+      ],
+      "parameter_types": [
+        "emission_factor"
+      ],
+      "extractable_parameters": [
+        {
+          "key": "emission_factor",
+          "parameter_type": "emission_factor",
+          "value": 0.4471,
+          "unit": "kgCO2/kWh",
+          "excerpt": "甘肃平均 0.4471 kgCO₂/kWh",
+          "excerpt_locator": "2023年电力排放因子公告·甘肃平均值"
+        }
+      ]
+    },
+    {
+      "source_id": "gsei-baiyin-vfd-2024",
+      "title": "白银有色2024年变频器采购候选公告",
+      "source_url": "https://www.gsei.com.cn/html/1337/2024-03-22/content-492836.html",
+      "issue_date": "2024-03-22",
+      "checked_at": "2026-11-04",
+      "model_scope": [
+        "quotes"
+      ],
+      "note": "历史候选报价≠单台通用售价",
+      "applicable_type_codes": [
+        "motor_drive",
+        "ball_mill",
+        "fan_ventilation",
+        "pump_drainage",
+        "pump_process",
+        "compressor"
+      ],
+      "applicable_method_codes": [
+        "power_drop_hours",
+        "baseline_fraction",
+        "motor_efficiency"
+      ],
+      "parameter_types": [
+        "procurement_quote"
+      ],
+      "extractable_parameters": []
+    },
+    {
+      "source_id": "gsei-baiyin-pump-2025",
+      "title": "白银有色2025年水泵采购候选公告",
+      "source_url": "https://manage.gsei.com.cn/html/1337/2025-09-22/content-622794.html",
+      "issue_date": "2025-09-22",
+      "checked_at": "2026-11-04",
+      "model_scope": [
+        "quotes"
+      ],
+      "applicable_type_codes": [
+        "pump_drainage",
+        "pump_process"
+      ],
+      "applicable_method_codes": [
+        "pump_hydraulic",
+        "baseline_fraction"
+      ],
+      "parameter_types": [
+        "procurement_quote"
+      ],
+      "extractable_parameters": []
+    }
+  ],
+  "fetch_policy": {
+    "whitelist_hosts": [
+      "www.miit.gov.cn",
+      "www.gov.cn",
+      "openstd.samr.gov.cn",
+      "www.mee.gov.cn",
+      "www.gsei.com.cn",
+      "manage.gsei.com.cn"
+    ],
+    "deny_private_or_loopback": true,
+    "user_url_fetch": false
+  }
+}

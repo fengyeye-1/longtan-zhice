@@ -1,0 +1,16 @@
+# Contest demo should use the local Windows launcher (一键启动.bat).
+# plan: free has an ephemeral filesystem. The container SQLite at
+# backend/data/projects.sqlite is deleted on sleep, restart, or redeploy.
+# Do not promise to keep enterprise data on this free instance.
+# This Blueprint does not provision a persistent disk or managed database.
+# For durable online storage, attach a persistent disk or an external database
+# and complete backup/restore acceptance; do not claim cloud data will be kept.
+services:
+  - type: web
+    name: longtan-zhice
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
