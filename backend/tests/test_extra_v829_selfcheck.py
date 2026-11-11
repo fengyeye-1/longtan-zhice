@@ -46,9 +46,9 @@ def _project(client: TestClient, name: str = "829测试企业"):
 def test_health_version_is_829():
     c = TestClient(app, raise_server_exceptions=False)
     h = c.get("/api/health").json()
-    assert h["version"] == "8.2.10" == APP_VERSION
-    assert h["frontend_expected"] == "8.2.10"
-    assert h["build_id"] == BUILD_ID == "v8210-audit-20261111"
+    assert h["version"] == "8.2.11" == APP_VERSION
+    assert h["frontend_expected"] == "8.2.11"
+    assert h["build_id"] == BUILD_ID == "v8211-audit-20261111"
     assert h.get("data_persistence") == "local_sqlite"
     note = h.get("data_persistence_note") or ""
     assert "本机" in note
@@ -177,21 +177,13 @@ def test_a06_project_token_survives_logout_until_rotated_or_revoked():
     assert got.status_code == 200
     assert got.json().get("case", {}).get("case_id") == cid
 
-    owner = TestClient(app, raise_server_exceptions=False)
-    # 重新用原工作区？注销后需重新建会话再激活：这里用 token 登录后轮换
+    # 8.2.11：仅凭项目 Token 的访客不得轮换所有者凭证；注销后旧 Token 仍可访问，直到所有者轮换/撤销。
     rot = other.post("/api/session/project-token/rotate", headers={"X-Project-Token": tok})
-    assert rot.status_code == 200, rot.text[:300]
-    new_tok = rot.json()["project_token"]
-    assert new_tok and new_tok != tok
+    assert rot.status_code == 403, rot.text[:300]
     stale = TestClient(app, raise_server_exceptions=False)
-    bad = stale.get("/api/results", headers={"X-Project-Token": tok})
-    assert bad.status_code in (200, 403)
-    if bad.status_code == 200:
-        assert bad.json().get("case", {}).get("case_id") != cid
-    fresh = TestClient(app, raise_server_exceptions=False)
-    ok = fresh.get("/api/results", headers={"X-Project-Token": new_tok})
-    assert ok.status_code == 200
-    assert ok.json().get("case", {}).get("case_id") == cid
+    still = stale.get("/api/results", headers={"X-Project-Token": tok})
+    assert still.status_code == 200
+    assert still.json().get("case", {}).get("case_id") == cid
 
 
 def test_a06_workspace_revoke_invalidates_old_token_but_keeps_workspace():

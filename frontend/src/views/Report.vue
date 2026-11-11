@@ -62,6 +62,13 @@ function fmt(n: number | null | undefined, digits = 2) {
   return Number(n).toLocaleString('zh-CN', { maximumFractionDigits: digits })
 }
 
+function schemeCell(s: any, value: number | null | undefined, digits = 2) {
+  if (s?.inapplicable_reason || s?.status === 'invalid_input') {
+    return s.inapplicable_reason || s.error || s.payback_message || '超过该设备可用运行小时，不适用'
+  }
+  return fmt(value, digits) ?? '—'
+}
+
 async function loadPreview() {
   loading.value = true
   exportStatus.value = ''
@@ -182,10 +189,10 @@ loadPreview()
       <tbody>
         <tr v-for="s in schemes" :key="s.hours">
           <td>{{ s.hours }}</td>
-          <td class="num">{{ s.error || fmt(s.annual_electricity_saved_kwh, 0) }}</td>
-          <td class="num">{{ fmt(s.scenario_grid_co2_saved_t) }}</td>
-          <td class="num">{{ fmt(s.scenario_electricity_cost_saved_cny) }}</td>
-          <td>{{ s.simple_payback_years ?? s.payback_message ?? '—' }}</td>
+          <td class="num">{{ schemeCell(s, s.annual_electricity_saved_kwh, 0) }}</td>
+          <td class="num">{{ schemeCell(s, s.scenario_grid_co2_saved_t) }}</td>
+          <td class="num">{{ schemeCell(s, s.scenario_electricity_cost_saved_cny) }}</td>
+          <td>{{ s.inapplicable_reason || s.simple_payback_years || s.payback_message || '—' }}</td>
         </tr>
       </tbody>
     </table>

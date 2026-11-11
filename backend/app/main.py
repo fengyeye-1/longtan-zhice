@@ -561,8 +561,11 @@ def session_info():
         'auth_scope': scope,
         'auth_scope_note': (
             'workspace_session：已验证会话 Cookie，可访问该所有者工作区；'
-            'project_token：仅能访问该 Token 对应的单个项目；'
+            '有签名 Cookie 不等于拥有当前项目，必须按项目核对 owner_session。'
+            'project_token：仅能访问该 Token 对应的单个项目，访客不等于所有者，不能轮换/撤销凭证或恢复版本；'
             'public_demo：公开示范或尚未授权的访客。'
+            '轮换或撤销项目凭证会使所有从旧 Token 衍生的访客授权失效；访客响应不会返回当前有效 Token。'
+            '恢复已存在项目的历史版本不会改变原所有者。'
             '退出当前工作区只会撤销会话 Cookie，不会自动作废已发放的项目恢复凭证；如需作废请轮换或撤销该项目凭证。'
         ),
     }
@@ -654,7 +657,7 @@ async def create_empty_enterprise(request: Request, name: Optional[str] = None):
         title = '新企业项目'
     case = store.empty_enterprise_case(title)
     return {
-        'case': case.model_dump(),
+        'case': store.case_public_dict(case),
         'results': full_recalculate(),
         'project_token': store.session_project_token(),
         'session_id': store.current_session_id(),
@@ -671,7 +674,7 @@ def activate(case_id: str):
     except PermissionError as e:
         raise HTTPException(403, str(e))
     return {
-        'case': c.model_dump(),
+        'case': store.case_public_dict(c),
         'results': full_recalculate(),
         'project_token': store.session_project_token(),
         'session_id': store.current_session_id(),
@@ -681,7 +684,7 @@ def activate(case_id: str):
 @app.get('/api/case')
 def current_case():
     try:
-        return store.get_case().model_dump()
+        return store.case_public_dict(store.get_case())
     except PermissionError as e:
         raise HTTPException(403, str(e))
 
@@ -795,7 +798,7 @@ def add_device(body: AddDeviceRequest):
     except Exception as e:
         raise _http_store(e)
     return {
-        'case': case.model_dump(),
+        'case': store.case_public_dict(case),
         'results': full_recalculate(),
         'project_token': store.session_project_token(),
     }
@@ -854,7 +857,7 @@ def update_device(device_id: str, body: UpdateDeviceRequest):
     orig_dev = next((d for d in orig.devices if d.id == device_id), None)
     if orig_dev is not None and orig_dev.model_dump() == dev.model_dump() and dev.device_type == old_type:
         results = full_recalculate()
-        return {'case': orig.model_dump(), 'results': results, 'message': '没有需要保存的变更'}
+        return {'case': store.case_public_dict(orig), 'results': results, 'message': '没有需要保存的变更'}
     try:
         case = store.commit_case(draft)
     except Exception as e:
@@ -868,7 +871,7 @@ def update_device(device_id: str, body: UpdateDeviceRequest):
             ))
             for rf in case.retrofits
         ) else msg
-    return {'case': case.model_dump(), 'results': results, 'message': msg}
+    return {'case': store.case_public_dict(case), 'results': results, 'message': msg}
 
 
 @app.delete('/api/devices/{device_id}')
@@ -918,7 +921,7 @@ def delete_device(device_id: str):
         case = store.update_case(mut)
     except Exception as e:
         raise _http_store(e)
-    return {'case': case.model_dump(), 'results': full_recalculate()}
+    return {'case': store.case_public_dict(case), 'results': full_recalculate()}
 
 
 @app.get('/api/devices/recycle-bin')
@@ -976,7 +979,7 @@ def restore_device(device_id: str):
         case = store.update_case(mut)
     except Exception as e:
         raise _http_store(e)
-    return {'case': case.model_dump(), 'results': full_recalculate()}
+    return {'case': store.case_public_dict(case), 'results': full_recalculate()}
 
 
 @app.post('/api/demo/restore-devices')
@@ -1106,7 +1109,7 @@ def restore_demo_default_devices():
     names = [id_to_name.get(x, x) for x in (restored_from_bin + added_from_tpl)]
     msg = ('已恢复：' + '、'.join(names)) if names else '所需设备已在列表中，无需恢复'
     return {
-        'case': case.model_dump(),
+        'case': store.case_public_dict(case),
         'results': full_recalculate(),
         'restored_from_bin': list(restored_from_bin),
         'added_from_template': list(added_from_tpl),
@@ -1204,7 +1207,7 @@ def add_retrofit(body: AddRetrofitRequest):
         case = store.update_case(mut)
     except Exception as e:
         raise _http_store(e)
-    return {'case': case.model_dump(), 'results': full_recalculate()}
+    return {'case': store.case_public_dict(case), 'results': full_recalculate()}
 
 
 def _snapshot_retrofit(rf) -> dict:
@@ -1232,7 +1235,7 @@ def update_retrofit(rid: str, body: dict):
     except Exception as e:
         raise _http_store(e)
     message = '已保存为草稿，不参与推荐和正式报告。' if draft_only else '已保存，节电与减碳结果已更新'
-    return {'case': case.model_dump(), 'results': full_recalculate(), 'message': message}
+    return {'case': store.case_public_dict(case), 'results': full_recalculate(), 'message': message}
 
 
 @app.delete('/api/retrofits/{rid}')
@@ -1254,7 +1257,7 @@ def delete_retrofit(rid: str):
         case = store.commit_case(draft)
     except Exception as e:
         raise _http_store(e)
-    return {'case': case.model_dump(), 'results': full_recalculate(), 'message': '已保存，节电与减碳结果已更新'}
+    return {'case': store.case_public_dict(case), 'results': full_recalculate(), 'message': '已保存，节电与减碳结果已更新'}
 
 
 @app.post('/api/retrofits/{rid}/copy')
@@ -1277,7 +1280,7 @@ def copy_retrofit(rid: str):
     except Exception as e:
         raise _http_store(e)
     return {
-        'case': case.model_dump(),
+        'case': store.case_public_dict(case),
         'results': full_recalculate(),
         'message': '已复制参数。请核对新设备是否适用，确认前只作参考试算。',
     }
@@ -1310,7 +1313,7 @@ def revert_retrofit(rid: str):
         case = store.commit_case(draft)
     except Exception as e:
         raise _http_store(e)
-    return {'case': case.model_dump(), 'results': full_recalculate(), 'message': '已保存，节电与减碳结果已更新'}
+    return {'case': store.case_public_dict(case), 'results': full_recalculate(), 'message': '已保存，节电与减碳结果已更新'}
 
 
 @app.put('/api/scenario')
@@ -1358,7 +1361,7 @@ def update_scenario(body: UpdateScenarioRequest):
     results = recalculate_case(case)
     _assert_results_finite(results)
     return {
-        'case': case.model_dump(),
+        'case': store.case_public_dict(case),
         'results': results,
         'project_token': store.session_project_token(),
         'session_id': store.current_session_id(),
@@ -1418,7 +1421,7 @@ def add_custom_param(body: CustomParamRequest):
     if sa.get('status') == 'invalid_input':
         raise HTTPException(400, sa.get('error') or sa.get('waiting_message') or 'invalid_input')
     case = store.commit_case(draft)
-    return {'case': case.model_dump(), 'results': recalculate_case(case)}
+    return {'case': store.case_public_dict(case), 'results': recalculate_case(case)}
 
 
 @app.post('/api/versions/save')
@@ -1442,7 +1445,7 @@ def restore(version_id: str):
         raise HTTPException(404, '版本不存在')
     except PermissionError as e:
         raise HTTPException(403, str(e))
-    return {'case': case.model_dump(), 'results': full_recalculate()}
+    return {'case': store.case_public_dict(case), 'results': full_recalculate()}
 
 
 @app.get('/api/versions/compare')
@@ -1756,7 +1759,7 @@ def add_user_quote(body: UserQuoteRequest):
     }
     draft.user_quotes = list(draft.user_quotes or []) + [item]
     case = store.commit_case(draft)
-    return {'ok': True, 'quote': item, 'case': case.model_dump(exclude={'access_token'})}
+    return {'ok': True, 'quote': item, 'case': store.case_public_dict(case)}
 
 
 @app.post('/api/procurement/apply-quote')
@@ -1840,7 +1843,7 @@ def apply_quote(body: ApplyQuoteRequest):
             'compatibility': compat,
             'energy_unchanged': before_kwh == after_sa.get('saved_kwh'),
             'carbon_unchanged': before_co2 == after_sa.get('co2_reduction_t'),
-            'case': case.model_dump(exclude={'access_token'}),
+            'case': store.case_public_dict(case),
             'results': after,
             'watermark': choice.watermark,
         }
@@ -1895,7 +1898,7 @@ def apply_quote(body: ApplyQuoteRequest):
         'carbon_unchanged': before_co2 == after_sa.get('co2_reduction_t'),
         'investment_unchanged': True,
         'price_sensitivity': as_sensitivity,
-        'case': case.model_dump(exclude={'access_token'}),
+        'case': store.case_public_dict(case),
         'results': after,
         'watermark': choice.watermark,
         'message': choice.watermark,

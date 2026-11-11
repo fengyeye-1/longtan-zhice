@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from .store import get_case, infer_data_grade, build_data_prep
+from .store import get_case, infer_data_grade, build_data_prep, case_public_dict
 from ..models.schema import CaseState
 from ..calc.equipment import (
     mill_scenario, pump_scenario,
@@ -197,6 +197,23 @@ def _fmt_hours_zh(v: float) -> str:
     if float(v) == int(float(v)):
         return f'{int(float(v)):,}'
     return f'{float(v):,.2f}'
+
+
+def _format_scheme_txt_line(s: dict) -> str:
+    """小时对照行：无效情景写明不适用，禁止输出 None kWh / None t 等程序占位。"""
+    reason = s.get('inapplicable_reason') or (
+        s.get('error') if s.get('status') == 'invalid_input' else None
+    )
+    if reason or s.get('annual_electricity_saved_kwh') is None:
+        note = reason or s.get('payback_message') or s.get('error') or '超过该设备可用运行小时，不适用'
+        return f"- {s.get('hours')} 小时：{note}"
+    cost = s.get('scenario_electricity_cost_saved_cny')
+    cost_txt = '尚待补充' if cost is None else cost
+    return (
+        f"- {s.get('hours')} 小时：节电 {s.get('annual_electricity_saved_kwh')} kWh，"
+        f"减排 {s.get('scenario_grid_co2_saved_t')} t，"
+        f"节费 {cost_txt}"
+    )
 
 
 def _hours_conflict_message(model_hours=None, device_hours=None) -> str:
@@ -862,6 +879,7 @@ def _mill_inputs_from_case(case: CaseState) -> dict:
         power_drop = None
 
     hours = sc.hours
+    hours_source = 'scenario' if hours is not None else None
     consistency_warnings: list[str] = []
     investment = None
     if measure is not None:
@@ -885,6 +903,7 @@ def _mill_inputs_from_case(case: CaseState) -> dict:
             }
         if hours is None and getattr(dev, 'hours', None) is not None:
             hours = dev.hours
+            hours_source = 'device'
         # P0-05：功率降幅不得超过改造前平均运行功率（此处用设备功率近似）
         if (
             method == 'power_drop_hours'
@@ -921,6 +940,7 @@ def _mill_inputs_from_case(case: CaseState) -> dict:
         'error': None,
         'power_drop_kw': power_drop,
         'hours': hours,
+        'hours_source': hours_source,
         'investment_cny': investment,
         'measure': measure,
         'consistency_warnings': consistency_warnings,
@@ -1202,14 +1222,28 @@ def recalculate_case(case: CaseState) -> dict[str, Any]:
             'source_name': '金徽2024年报' if case.is_demo else '用户/措施输入',
             'label': '披露' if case.is_demo else '假设',
         }
-        hours_src = {
-            'value': mill_in['hours'],
-            'unit': 'h',
-            'status': 'assumed',
-            'data_type': '假设',
-            'source_name': '情景假设',
-            'label': '假设',
-        }
+        if mill_in.get('hours_source') == 'device':
+            bound = None
+            if selected_measure is not None and selected_measure.device_id:
+                bound = _device_by_id(case, selected_measure.device_id)
+            dev_name = getattr(bound, 'name', None) or '当前设备'
+            hours_src = {
+                'value': mill_in['hours'],
+                'unit': 'h',
+                'status': 'assumed',
+                'data_type': '设备数据',
+                'source_name': f'继承自设备「{dev_name}」运行小时',
+                'label': '继承自设备数据',
+            }
+        else:
+            hours_src = {
+                'value': mill_in['hours'],
+                'unit': 'h',
+                'status': 'assumed',
+                'data_type': '假设',
+                'source_name': '情景假设',
+                'label': '假设',
+            }
         inv_src = {
             'value': mill_in['investment_cny'],
             'unit': '元',
@@ -1386,14 +1420,16 @@ def recalculate_case(case: CaseState) -> dict[str, Any]:
                 and (bd := _device_by_id(case, selected_measure.device_id)) is not None
                 and bd.hours is not None and h > float(bd.hours)
             ):
+                inapplicable = '超过该设备可用运行小时，不适用'
                 row.update({
                     'status': 'invalid_input',
                     'annual_electricity_saved_kwh': None,
                     'scenario_grid_co2_saved_t': None,
                     'scenario_electricity_cost_saved_cny': None,
                     'simple_payback_years': None,
-                    'payback_message': _hours_conflict_message(),
-                    'error': _hours_conflict_message(),
+                    'payback_message': inapplicable,
+                    'error': inapplicable,
+                    'inapplicable_reason': inapplicable,
                 })
                 schemes.append(row)
                 continue
@@ -1507,6 +1543,11 @@ def recalculate_case(case: CaseState) -> dict[str, Any]:
         factor_meta=factor_meta,
         ef=ef,
     )
+    if isinstance(mill_result, dict) and mill_result.get('trace'):
+        selected_assessment['trace'] = mill_result['trace']
+        hours_src = (mill_result['trace'].get('param_sources') or {}).get('hours')
+        if hours_src:
+            selected_assessment.setdefault('source_trace', {})['hours'] = hours_src
     # P0-06：工况不一致时附加告警，禁止当作可信推荐
     cwarns = list(mill_in.get('consistency_warnings') or [])
     cwarns.extend(selected_assessment.get('consistency_warnings') or [])
@@ -1770,7 +1811,7 @@ def recalculate_case(case: CaseState) -> dict[str, Any]:
 
 
     return {
-        'case': case.model_dump(),
+        'case': case_public_dict(case),
         'features': features,
         'data_prep': [i.model_dump() for i in case.data_prep],
         'missing_fields': [],
@@ -2274,11 +2315,7 @@ def build_report_text(payload: dict | None = None, *, sections: list[str] | None
                 f"measure={sa.get('measure_id')} model={sa.get('model_label') or tech}"
             )
             for s in schemes_rows:
-                lines.append(
-                    f"- {s.get('hours')} 小时：节电 {s.get('annual_electricity_saved_kwh')} kWh，"
-                    f"减排 {s.get('scenario_grid_co2_saved_t')} t，"
-                    f"节费 {s.get('scenario_electricity_cost_saved_cny')}"
-                )
+                lines.append(_format_scheme_txt_line(s))
             lines.append('')
 
     # 仅当用户显式要 energy 且当前选中不是泵、又想看泵旁路时才附泵独立段——自选 quotes 不附

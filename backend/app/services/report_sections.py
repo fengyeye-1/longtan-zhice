@@ -378,12 +378,20 @@ def _append_schemes_rows(rows: list, data: dict, sa: dict) -> None:
         return
     rows.append(['有效小时', '节电kWh', '减排tCO2', '节费元'])
     for s in schemes_rows:
-        rows.append([
-            s.get('hours'),
-            s.get('annual_electricity_saved_kwh'),
-            s.get('scenario_grid_co2_saved_t'),
-            s.get('scenario_electricity_cost_saved_cny'),
-        ])
+        reason = s.get('inapplicable_reason') or (
+            s.get('error') if s.get('status') == 'invalid_input' else None
+        )
+        if reason or s.get('annual_electricity_saved_kwh') is None:
+            note = reason or s.get('payback_message') or s.get('error') or '超过该设备可用运行小时，不适用'
+            rows.append([s.get('hours'), note, note, note])
+        else:
+            cost = s.get('scenario_electricity_cost_saved_cny')
+            rows.append([
+                s.get('hours'),
+                s.get('annual_electricity_saved_kwh'),
+                s.get('scenario_grid_co2_saved_t'),
+                cost if cost is not None else '尚待补充',
+            ])
 
 
 def _append_quotes_rows(rows: list, data: dict) -> None:

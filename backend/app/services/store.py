@@ -36,7 +36,9 @@ MAX_ANON_SESSIONS = int(os.environ.get('LTZS_MAX_ANON_SESSIONS', '200'))
 _LAST_SESSION_SWEEP_TS = 0
 # 权限模型：
 # - 已验证的会话 Cookie（ltzs_sid + 未过期且未撤销的 ltzs_stk）= 工作区级身份，可恢复该所有者的全部项目。
-# - 项目 Token（X-Project-Token）= 单项目访问凭证，只能读取对应项目，不得提升为工作区凭证。
+# - 项目 Token（X-Project-Token）= 单项目访问凭证，只能访问对应项目，不得提升为该项目所有者，也不得恢复兄弟项目。
+# - 访客授权（guest_grants）与真正所有权（owned_case_ids + owner_session）必须分开存储。
+# - 有签名 Cookie 不等于拥有当前项目：必须验证 case.owner_session 等于当前可信会话。
 AUTH_SCOPE_WORKSPACE = 'workspace_session'
 AUTH_SCOPE_PROJECT = 'project_token'
 AUTH_SCOPE_PUBLIC = 'public_demo'
@@ -134,12 +136,27 @@ def build_data_prep(case: CaseState) -> list[DataPrepItem]:
                 detail='请选择技改措施或填写功率降幅',
                 module='mill',
             ))
+        inherited_hours = None
+        inherited_from = None
+        if sc.hours is None and measure is not None and measure.device_id:
+            bound = next((x for x in case.devices if x.id == measure.device_id), None)
+            if bound is not None and bound.hours is not None:
+                inherited_hours = bound.hours
+                inherited_from = bound.name or bound.id
         if sc.hours is not None:
             items.append(DataPrepItem(
                 key='hours',
                 label='有效节能小时',
                 status='assumed',
-                detail=f'当前采用假设 {sc.hours:g} h',
+                detail=f'当前采用假设 {sc.hours:g} h（来源：情景填写）',
+                module='mill',
+            ))
+        elif inherited_hours is not None:
+            items.append(DataPrepItem(
+                key='hours',
+                label='有效节能小时',
+                status='assumed',
+                detail=f'当前采用 {inherited_hours:g} h（来源：设备「{inherited_from}」运行小时）',
                 module='mill',
             ))
         else:
@@ -787,9 +804,80 @@ def _blank_session(sid: str) -> dict[str, Any]:
         "active_case_id": JINHUI_ID,
         "project_token": None,
         "owned_case_ids": set(),
+        "guest_grants": {},
         "created_at": now,
         "last_seen": now,
     }
+
+
+def _guest_grants(sess: dict[str, Any]) -> dict[str, str]:
+    grants = sess.get("guest_grants")
+    if not isinstance(grants, dict):
+        grants = {}
+        sess["guest_grants"] = grants
+    return grants
+
+
+def _session_is_owner(sess: dict[str, Any] | None, case_id: str, case: CaseState | None = None) -> bool:
+    """真正所有者：当前会话号等于服务器记录的 owner_session。"""
+    if not sess or not case_id or case_id == JINHUI_ID:
+        return False
+    live = case if case is not None else _CASES.get(case_id)
+    if live is None:
+        return False
+    return getattr(live, "owner_session", None) == sess.get("session_id")
+
+
+def _grant_token_valid(token: str | None, case_id: str) -> bool:
+    return bool(token and _TOKENS.get(token) == case_id)
+
+
+def _grant_valid(sess: dict[str, Any] | None, case_id: str) -> bool:
+    if not sess or not case_id:
+        return False
+    tok = _guest_grants(sess).get(case_id)
+    return _grant_token_valid(tok, case_id)
+
+
+def _drop_guest_access(sess: dict[str, Any], case_id: str, old_tokens: set[str] | None = None) -> None:
+    """清掉非所有者会话上对某项目的授权、活动项目和缓存 Token。"""
+    grants = _guest_grants(sess)
+    grants.pop(case_id, None)
+    owned = sess.get("owned_case_ids")
+    if isinstance(owned, set):
+        owned.discard(case_id)
+    if sess.get("active_case_id") == case_id:
+        sess["active_case_id"] = JINHUI_ID
+    cached = sess.get("project_token")
+    if cached and (old_tokens is None or cached in old_tokens or _TOKENS.get(cached) == case_id):
+        sess["project_token"] = None
+
+
+def _invalidate_derived_grants(case_id: str, old_token: str | None, *, owner_sid: str | None = None, new_owner_token: str | None = None) -> None:
+    """轮换/撤销后，失效所有从旧 Token 衍生的访客授权；不把新 Token 写入访客会话。"""
+    old_tokens = {t for t in (old_token, new_owner_token) if t}
+    for sess in list(_SESSIONS.values()):
+        sid = sess.get("session_id")
+        if owner_sid and sid == owner_sid:
+            if new_owner_token:
+                sess["project_token"] = new_owner_token
+            continue
+        if _session_is_owner(sess, case_id):
+            if new_owner_token:
+                sess["project_token"] = new_owner_token
+            continue
+        grants = _guest_grants(sess)
+        granted = grants.get(case_id)
+        cached = sess.get("project_token")
+        touched = (
+            case_id in grants
+            or (granted and (granted == old_token or granted == new_owner_token or _TOKENS.get(granted) == case_id))
+            or (cached and cached in old_tokens)
+            or (isinstance(sess.get("owned_case_ids"), set) and case_id in sess["owned_case_ids"])
+            or sess.get("active_case_id") == case_id
+        )
+        if touched:
+            _drop_guest_access(sess, case_id, old_tokens)
 
 
 def _touch_session(sess: dict[str, Any] | None) -> None:
@@ -804,6 +892,8 @@ def _is_anonymous_session(sess: dict[str, Any] | None) -> bool:
     if owned:
         return False
     if sess.get("project_token"):
+        return False
+    if _guest_grants(sess):
         return False
     active = sess.get("active_case_id")
     if active not in (None, "", JINHUI_ID):
@@ -1124,16 +1214,22 @@ def set_request_context(
 
 
 def _session_can_access(case_id: str, case: CaseState | None = None, *, sess: dict[str, Any] | None = None) -> bool:
-    """私人项目访问：仅信任本进程已登记的 owned_case_ids 或校验通过的项目 Token。
+    """私人项目访问：真正所有权、仍有效的访客授权，或本请求校验通过的项目 Token。
     客户端自填 X-Session-Id 与库内 owner_session 字符串相等，不足以成为身份证明。
+    有签名 Cookie 也不等于拥有该项目。
     """
     sess = sess or _session()
     if case_id == JINHUI_ID:
         return True
-    if case_id in (sess.get('owned_case_ids') or set()):
+    if _session_is_owner(sess, case_id, case):
         return True
-    token = _ctx_token.get() or sess.get('project_token')
-    if token and _TOKENS.get(token) == case_id:
+    if _grant_valid(sess, case_id):
+        return True
+    token = _ctx_token.get()
+    if _grant_token_valid(token, case_id):
+        return True
+    # 仅所有者会话里缓存的 project_token 可用于无请求头的后续访问
+    if _session_is_owner(sess, case_id, case) and _grant_token_valid(sess.get('project_token'), case_id):
         return True
     return False
 
@@ -1164,10 +1260,18 @@ def _case_id_for_token(token: str | None) -> str | None:
 
 
 def get_active_id() -> str:
+    sess = _session()
     cid = _case_id_for_token(_ctx_token.get())
-    if cid:
-        return cid
-    return _session()['active_case_id']
+    if cid and _session_can_access(cid, sess=sess):
+        # 已有自己项目的工作区会话：他人 Token 只附加授权，不抢占当前活动项目。
+        owned = sess.get('owned_case_ids') or set()
+        if not owned or _session_is_owner(sess, cid):
+            return cid
+    active = sess.get('active_case_id') or JINHUI_ID
+    if active != JINHUI_ID and not _session_can_access(active, sess=sess):
+        sess['active_case_id'] = JINHUI_ID
+        return JINHUI_ID
+    return active
 
 
 def list_cases() -> list[dict[str, Any]]:
@@ -1187,10 +1291,16 @@ def list_cases() -> list[dict[str, Any]]:
         'owned': False,
     })
     with _LOCK:
-        for cid in list(sess['owned_case_ids']):
+        seen: set[str] = {demo.case_id}
+        owned = sess.setdefault('owned_case_ids', set())
+        for cid in list(owned):
             c = _CASES.get(cid)
             if not c:
                 continue
+            if not _session_is_owner(sess, cid, c):
+                owned.discard(cid)
+                continue
+            seen.add(c.case_id)
             out.append({
                 'case_id': c.case_id,
                 'name': c.name,
@@ -1200,6 +1310,27 @@ def list_cases() -> list[dict[str, Any]]:
                 'version_label': c.version_label,
                 'active': c.case_id == sess['active_case_id'],
                 'owned': True,
+            })
+        grants = _guest_grants(sess)
+        for cid in list(grants):
+            if cid in seen:
+                continue
+            if not _grant_valid(sess, cid):
+                grants.pop(cid, None)
+                continue
+            c = _CASES.get(cid)
+            if not c:
+                continue
+            seen.add(c.case_id)
+            out.append({
+                'case_id': c.case_id,
+                'name': c.name,
+                'is_demo': False,
+                'protected': False,
+                'data_grade': c.data_grade,
+                'version_label': c.version_label,
+                'active': c.case_id == sess['active_case_id'],
+                'owned': False,
             })
     return out
 
@@ -1222,10 +1353,12 @@ def _new_token() -> str:
     return secrets.token_urlsafe(24)
 
 
-def _register_case(case: CaseState, session_id: str) -> CaseState:
+def _register_case(case: CaseState, session_id: str, *, claim_ownership: bool = True) -> CaseState:
     if not case.access_token:
         case.access_token = _new_token()
-    case.owner_session = session_id
+    # 恢复已存在项目时必须保留服务器记录的原始所有权，不得用调用者会话覆盖。
+    if claim_ownership or not case.owner_session:
+        case.owner_session = session_id
     case.protected = False
     case.is_demo = False
     case.data_prep = build_data_prep(case)
@@ -1238,15 +1371,17 @@ def _register_case(case: CaseState, session_id: str) -> CaseState:
         prev_token = sess.get('project_token')
         previous_case = deepcopy(_CASES[case.case_id]) if case.case_id in _CASES else None
         previous_token_owner = _TOKENS.get(case.access_token)
+        is_owner = case.owner_session == session_id
         # 先安全落盘，再发布到内存与会话，避免 HTTP 500 却留下幽灵项目。
         try:
             _persist_case(case)
             _CASES[case.case_id] = case
             _TOKENS[case.access_token] = case.case_id
-            sess.setdefault('owned_case_ids', set()).add(case.case_id)
+            if is_owner:
+                sess.setdefault('owned_case_ids', set()).add(case.case_id)
+                sess['project_token'] = case.access_token
+                bind_request_token(case.access_token)
             sess['active_case_id'] = case.case_id
-            sess['project_token'] = case.access_token
-            bind_request_token(case.access_token)
         except Exception:
             if previous_case is not None:
                 _CASES[case.case_id] = previous_case
@@ -1277,8 +1412,16 @@ def set_active(case_id: str) -> CaseState:
         if not _session_can_access(case_id, case, sess=sess):
             raise PermissionError('无权激活他人项目')
         sess['active_case_id'] = case_id
-        sess['project_token'] = case.access_token
-        bind_request_token(case.access_token)
+        if _session_is_owner(sess, case_id, case):
+            sess['project_token'] = case.access_token
+            bind_request_token(case.access_token)
+        else:
+            # 访客激活不得把当前有效 Token 写入会话，以免泄露或在轮换后继续持有新凭证
+            grant = _guest_grants(sess).get(case_id)
+            if _grant_token_valid(grant, case_id):
+                bind_request_token(grant)
+            elif _grant_token_valid(_ctx_token.get(), case_id):
+                bind_request_token(_ctx_token.get())
         return deepcopy(case)
 
 
@@ -1304,15 +1447,23 @@ def authorize_and_activate(
         case = _CASES[cid]
         sess = _SESSIONS.setdefault(sid, _blank_session(sid))
         _touch_session(sess)
-        if attach_only:
+        is_owner = _session_is_owner(sess, cid, case)
+        if is_owner:
+            sess.setdefault('owned_case_ids', set()).add(cid)
+            if rehydrate_owner_projects:
+                owner = getattr(case, 'owner_session', None)
+                _rehydrate_session_projects(sess, owner_sid=owner or sid)
+            if not attach_only:
+                sess['active_case_id'] = cid
+            sess['project_token'] = token
             bind_request_token(token)
             return deepcopy(case)
-        sess['owned_case_ids'].add(cid)
-        if rehydrate_owner_projects:
-            owner = getattr(case, 'owner_session', None)
-            _rehydrate_session_projects(sess, owner_sid=owner or sid)
-        sess['active_case_id'] = cid
-        sess['project_token'] = token
+        # 访客：只记录依据该 Token 的授权，不得写入 owned_case_ids，也不得保存为工作区凭证。
+        owned = sess.setdefault('owned_case_ids', set())
+        owned.discard(cid)
+        _guest_grants(sess)[cid] = token
+        if not attach_only or not owned:
+            sess['active_case_id'] = cid
         bind_request_token(token)
         return deepcopy(case)
 
@@ -1403,8 +1554,10 @@ def replace_active_working_copy(state: CaseState) -> CaseState:
         state.data_prep = build_data_prep(state)
         previous = deepcopy(old) if old is not None else None
         _CASES[active_id] = state
-        sess['project_token'] = state.access_token
         sess['active_case_id'] = active_id
+        if _session_is_owner(sess, active_id, state):
+            sess['project_token'] = state.access_token
+            bind_request_token(state.access_token)
         try:
             _persist_case(state)
         except Exception:
@@ -1477,11 +1630,14 @@ def commit_case(case: CaseState) -> CaseState:
         _CASES[case.case_id] = case
         sess = _session()
         sess['active_case_id'] = case.case_id
-        sess['project_token'] = case.access_token
-        sess['owned_case_ids'].add(case.case_id)
         if case.access_token:
             _TOKENS[case.access_token] = case.case_id
-        bind_request_token(case.access_token)
+        if _session_is_owner(sess, case.case_id, case):
+            sess.setdefault('owned_case_ids', set()).add(case.case_id)
+            sess['project_token'] = case.access_token
+            bind_request_token(case.access_token)
+        elif not _session_can_access(case.case_id, case, sess=sess):
+            raise PermissionError('无权提交该项目')
         try:
             _persist_case(case)
         except Exception:
@@ -1547,10 +1703,21 @@ def save_version(label: str | None = None) -> dict:
     return result
 
 
+def _session_may_see_case(sess: dict[str, Any], case_id: str) -> bool:
+    if not case_id:
+        return False
+    if case_id == JINHUI_ID:
+        return True
+    if _session_is_owner(sess, case_id):
+        return True
+    if _grant_valid(sess, case_id):
+        return True
+    return _grant_token_valid(_ctx_token.get(), case_id)
+
+
 def list_versions() -> list[dict]:
     """仅列出本会话有权访问的版本。"""
     sess = _session()
-    owned = set(sess['owned_case_ids'])
     items = []
     with _LOCK:
         conn = _db()
@@ -1559,16 +1726,8 @@ def list_versions() -> list[dict]:
         ).fetchall()
         conn.close()
         for vid, label, case_id, saved_at, owner_session, token in rows:
-            # 必须是「当前请求持有」的凭证，不能仅因库内 token 字符串本身有效就放行
-            req_tok = _ctx_token.get() or sess.get('project_token')
-            tok_ok = bool(
-                req_tok
-                and (
-                    req_tok == token
-                    or _TOKENS.get(req_tok) == case_id
-                )
-            )
-            if case_id in owned or tok_ok:
+            # 不得仅因库内历史 token 字符串本身有效就放行；必须是当前有效授权。
+            if _session_may_see_case(sess, case_id):
                 items.append({
                     'version_id': vid,
                     'label': label,
@@ -1593,16 +1752,23 @@ def restore_version(version_id: str) -> CaseState:
         if not path.exists():
             raise FileNotFoundError('版本不存在')
         data = json.loads(path.read_text(encoding='utf-8'))
-        # 仅当属于本会话案例前缀时允许（防越权）
         cid = data.get('case_id')
-        if cid not in sess['owned_case_ids'] and cid != JINHUI_ID:
-            raise PermissionError('无权恢复该版本')
+        existing_target = _CASES.get(cid) if cid else None
+        if cid and cid != JINHUI_ID:
+            if existing_target is not None:
+                if not _session_is_owner(sess, cid, existing_target):
+                    raise PermissionError('仅项目所有者可以恢复历史版本')
+            elif not _session_is_owner(sess, cid) and cid not in (sess.get('owned_case_ids') or set()):
+                raise PermissionError('仅项目所有者可以恢复历史版本')
     else:
         payload, case_id, owner_session, token = row
-        req_tok = _ctx_token.get() or sess.get('project_token')
-        tok_ok = bool(req_tok and (req_tok == token or _TOKENS.get(req_tok) == case_id))
-        if case_id not in sess['owned_case_ids'] and not tok_ok:
-            raise PermissionError('无权恢复该版本')
+        existing_target = _CASES.get(case_id)
+        if case_id and case_id != JINHUI_ID:
+            if existing_target is not None:
+                if not _session_is_owner(sess, case_id, existing_target):
+                    raise PermissionError('仅项目所有者可以恢复历史版本')
+            elif not _session_is_owner(sess, case_id):
+                raise PermissionError('仅项目所有者可以恢复历史版本')
         data = json.loads(payload)
     state = CaseState.model_validate(data)
     if state.case_id == JINHUI_ID or state.protected:
@@ -1611,7 +1777,9 @@ def restore_version(version_id: str) -> CaseState:
         state.is_demo = False
         state.name = (state.name or '恢复版本') + '（恢复）'
         state.access_token = _new_token()
+        state.owner_session = None
     # 恢复必须成为新的合法修订并真正落盘，禁止把修订号倒退导致 _persist_case 静默跳过
+    # 已保存快照中的旧 Token、owner_session、revision 不得覆盖服务器当前的有效权限状态。
     with _LOCK:
         existing = _CASES.get(state.case_id)
         db_rev = int(getattr(existing, 'revision', 0) or 0) if existing else 0
@@ -1622,14 +1790,18 @@ def restore_version(version_id: str) -> CaseState:
             db_rev = max(db_rev, _payload_revision(row[0]))
         snap_rev = int(getattr(state, 'revision', 0) or 0)
         state.revision = max(db_rev, snap_rev) + 1
+        claim_ownership = True
         if existing:
-            state.access_token = existing.access_token or state.access_token
-            state.owner_session = existing.owner_session or state.owner_session
+            if not _session_is_owner(sess, existing.case_id, existing):
+                raise PermissionError('仅项目所有者可以恢复历史版本')
+            state.access_token = existing.access_token
+            state.owner_session = existing.owner_session
             state.case_id = existing.case_id
+            claim_ownership = False
         if not state.access_token:
             state.access_token = _new_token()
         state.data_prep = build_data_prep(state)
-        registered = _register_case(state, sess['session_id'])
+        registered = _register_case(state, sess['session_id'], claim_ownership=claim_ownership)
         conn = _db()
         check = conn.execute('SELECT payload FROM projects WHERE case_id=?', (registered.case_id,)).fetchone()
         conn.close()
@@ -1653,16 +1825,14 @@ def compare_versions(a_id: str, b_id: str) -> dict:
         sess = _session()
         if row:
             payload, case_id, owner_session, token = row
-            req_tok = _ctx_token.get() or sess.get('project_token')
-            tok_ok = bool(req_tok and (req_tok == token or _TOKENS.get(req_tok) == case_id))
-            if case_id not in sess['owned_case_ids'] and not tok_ok:
+            if not _session_may_see_case(sess, case_id):
                 raise PermissionError(vid)
             return json.loads(payload)
         p = VERSIONS / f'{vid}.json'
         if not p.exists():
             raise FileNotFoundError(vid)
         data = json.loads(p.read_text(encoding='utf-8'))
-        if data.get('case_id') not in sess['owned_case_ids'] and data.get('case_id') != JINHUI_ID:
+        if not _session_may_see_case(sess, data.get('case_id') or ''):
             raise PermissionError(vid)
         return data
     a, b = load(a_id), load(b_id)
@@ -1696,20 +1866,37 @@ def reset_session_demo() -> CaseState:
     return get_case(JINHUI_ID)
 
 
+def _require_project_owner(case: CaseState) -> dict[str, Any]:
+    """所有权管理（轮换/撤销凭证等）必须由服务器可验证的项目所有者执行。
+
+    不能只检查 current_auth_scope()==workspace_session：访客拿到签名 Cookie 后
+    后续请求也会显示为 workspace_session，但这不代表其拥有该项目。
+    """
+    sess = _session()
+    if current_auth_scope() != AUTH_SCOPE_WORKSPACE:
+        raise PermissionError("仅项目所有者可以管理项目凭证")
+    if not _session_is_owner(sess, case.case_id, case):
+        raise PermissionError("仅项目所有者可以管理项目凭证")
+    return sess
+
+
 def rotate_project_token(case_id: str | None = None) -> str:
     """轮换当前（或指定）项目的访问 Token：旧 Token 立即失效，返回新 Token。
 
-    需要已对该项目拥有访问权（工作区会话或仍有效的项目 Token）。
+    仅项目所有者可执行。旧访客授权、缓存项目 ID、活动项目与访客 Cookie 对应权限一并失效。
     公开示范不可轮换。退出工作区不会自动调用本函数。
     """
     case = get_case(case_id)
     if case.case_id == JINHUI_ID or case.protected or case.is_demo:
         raise PermissionError("公开示范没有可轮换的项目凭证")
+    owner_sess = _require_project_owner(case)
     new_tok = _new_token()
     with _LOCK:
         live = _CASES.get(case.case_id)
         if live is None:
             raise KeyError(f"案例不存在: {case.case_id}")
+        if not _session_is_owner(owner_sess, live.case_id, live):
+            raise PermissionError("仅项目所有者可以管理项目凭证")
         old = live.access_token
         previous = deepcopy(live)
         live.access_token = new_tok
@@ -1724,32 +1911,34 @@ def rotate_project_token(case_id: str | None = None) -> str:
                 _TOKENS[old] = case.case_id
             _TOKENS.pop(new_tok, None)
             raise
-        for sess in _SESSIONS.values():
-            if old and sess.get("project_token") == old:
-                sess["project_token"] = new_tok
-        sess = _SESSIONS.get(current_session_id())
-        if sess is not None:
-            sess["project_token"] = new_tok
+        _invalidate_derived_grants(
+            case.case_id,
+            old,
+            owner_sid=owner_sess.get("session_id"),
+            new_owner_token=new_tok,
+        )
         bind_request_token(new_tok)
     return new_tok
 
 
 def revoke_project_token(case_id: str | None = None) -> None:
-    """撤销当前项目已发放的访问 Token，不把新凭证交给调用方。
+    """撤销当前项目已发放的访问 Token。
 
-    仍可通过已验证的工作区会话访问该项目，并可再次轮换得到新凭证。
-    仅持有旧 Token、没有工作区会话的调用方在撤销后将失去访问权。
+    仅项目所有者可执行。所有者工作区会话仍可访问该项目，并可再次轮换得到新凭证。
+    所有从旧 Token 衍生的访客授权一并失效；旧访客不得收到新 Token。
     公开示范不可撤销。
     """
     case = get_case(case_id)
     if case.case_id == JINHUI_ID or case.protected or case.is_demo:
         raise PermissionError("公开示范没有可撤销的项目凭证")
-    workspace = current_auth_scope() == AUTH_SCOPE_WORKSPACE
+    owner_sess = _require_project_owner(case)
     new_tok = _new_token()
     with _LOCK:
         live = _CASES.get(case.case_id)
         if live is None:
             raise KeyError(f"案例不存在: {case.case_id}")
+        if not _session_is_owner(owner_sess, live.case_id, live):
+            raise PermissionError("仅项目所有者可以管理项目凭证")
         old = live.access_token
         previous = deepcopy(live)
         live.access_token = new_tok
@@ -1764,23 +1953,13 @@ def revoke_project_token(case_id: str | None = None) -> None:
                 _TOKENS[old] = case.case_id
             _TOKENS.pop(new_tok, None)
             raise
-        for sess in _SESSIONS.values():
-            if old and sess.get("project_token") == old:
-                sess["project_token"] = new_tok if workspace else None
-        if workspace:
-            sess = _SESSIONS.get(current_session_id())
-            if sess is not None:
-                sess["project_token"] = new_tok
-            bind_request_token(new_tok)
-        else:
-            sess = _SESSIONS.get(current_session_id())
-            if sess is not None:
-                sess["project_token"] = None
-                if case.case_id in (sess.get("owned_case_ids") or set()):
-                    sess["owned_case_ids"].discard(case.case_id)
-                if sess.get("active_case_id") == case.case_id:
-                    sess["active_case_id"] = JINHUI_ID
-            bind_request_token(None)
+        _invalidate_derived_grants(
+            case.case_id,
+            old,
+            owner_sid=owner_sess.get("session_id"),
+            new_owner_token=new_tok,
+        )
+        bind_request_token(new_tok)
 
 
 def bind_request_token(token: str | None) -> None:
@@ -1796,13 +1975,35 @@ def bind_request_token(token: str | None) -> None:
 
 
 def session_project_token() -> str | None:
+    """仅对真正所有者返回当前有效项目 Token；访客即使授权仍有效也不得看到。"""
+    sess = _session()
+
+    def _owner_token(tok: str | None) -> str | None:
+        cid = _case_id_for_token(tok)
+        if cid and _session_is_owner(sess, cid):
+            return tok
+        return None
+
     holder = _ctx_auth.get()
     if holder and holder.get('rebound'):
-        return holder.get('token')
-    tok = _ctx_token.get()
-    if tok and _case_id_for_token(tok):
-        return tok
-    return _session().get('project_token')
+        owned = _owner_token(holder.get('token'))
+        if owned:
+            return owned
+        # 访客绑定的是分享 Token，不得经响应头回写
+        return None
+    owned = _owner_token(_ctx_token.get())
+    if owned:
+        return owned
+    return _owner_token(sess.get('project_token'))
+
+
+def case_public_dict(case: CaseState) -> dict[str, Any]:
+    """API 序列化：仅真正所有者可见 access_token；访客响应不得带出当前有效凭证。"""
+    data = case.model_dump()
+    if not _session_is_owner(_session(), case.case_id, case):
+        data.pop('access_token', None)
+        data.pop('owner_session', None)
+    return data
 
 
 # 启动初始化

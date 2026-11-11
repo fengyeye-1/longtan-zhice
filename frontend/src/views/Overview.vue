@@ -18,6 +18,13 @@ function fmt(n: number | null | undefined, digits = 0) {
   return Number(n).toLocaleString('zh-CN', { maximumFractionDigits: digits })
 }
 
+function schemeCell(s: any, value: number | null | undefined, digits = 0) {
+  if (s?.inapplicable_reason || s?.status === 'invalid_input') {
+    return s.inapplicable_reason || s.error || s.payback_message || '超过该设备可用运行小时，不适用'
+  }
+  return fmt(value, digits) ?? '—'
+}
+
 function wanDu(n: number | null | undefined) {
   if (n == null) return null
   if (n >= 10000) return `${fmt(n / 10000, 1)} 万度`
@@ -164,9 +171,9 @@ function costText() {
       <tbody>
         <tr v-for="s in schemes" :key="s.hours">
           <td>{{ s.hours }}</td>
-          <td class="num">{{ s.error || fmt(s.annual_electricity_saved_kwh) }}</td>
-          <td class="num">{{ fmt(s.scenario_grid_co2_saved_t, 2) ?? '—' }}</td>
-          <td class="num">{{ fmt(s.scenario_electricity_cost_saved_cny, 2) ?? '—' }}</td>
+          <td class="num">{{ schemeCell(s, s.annual_electricity_saved_kwh) }}</td>
+          <td class="num">{{ schemeCell(s, s.scenario_grid_co2_saved_t, 2) }}</td>
+          <td class="num">{{ schemeCell(s, s.scenario_electricity_cost_saved_cny, 2) }}</td>
         </tr>
       </tbody>
     </table>
