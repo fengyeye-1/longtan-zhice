@@ -97,7 +97,10 @@ store.init_store()
 # CSRF / Origin 防护：CORS 只约束带凭证的跨域 *读取*，不能代替改变状态的 Origin 校验。
 # 策略：
 # 1) 安全方法（GET/HEAD/OPTIONS）不检查。
-# 2) 若存在 Origin，必须属于 CORS 白名单或 LTZS_PUBLIC_ORIGIN，或与本请求的 scheme+host+port 完全同源（本机一键启动、局域网 IP 直开）。不要用客户端可伪造的 X-Forwarded-Proto 判断 CSRF 来源。
+# 2) 若存在 Origin，必须属于 CORS 白名单或 LTZS_PUBLIC_ORIGIN，或与本请求的 scheme+host+port 完全同源（本机一键启动、局域网 IP 直开）。
+#    若 Origin 的主机名已出现在上述配置来源中，但 scheme+host+port 并未精确命中白名单，则直接拒绝，
+#    不再回退到 request.url.scheme（TLS 终止后容器可能只看到 HTTP，否则会把 http://同一公网主机 误判为同源）。
+#    不要用客户端可伪造的 X-Forwarded-Proto 判断 CSRF 来源。
 # 3) 若存在 Referer 而无 Origin，按 Referer 的 origin 执行同样规则。
 # 4) 无 Origin、无 Referer：视为非浏览器 API 客户端（pytest、本地脚本）。
 #    浏览器跨站表单会带 Origin；不把「无 Origin」当成匿名浏览器绕过，因为现代浏览器跨站 POST 必带 Origin。
@@ -136,6 +139,10 @@ def _origin_is_trusted(origin: str, request: Request) -> bool:
 
     反向代理场景请设置 LTZS_PUBLIC_ORIGIN=https://公开域名 ，不要信任
     客户端可伪造的 X-Forwarded-Proto。本机一键启动的 HTTP 同源仍然有效。
+
+    若 Origin 主机名已出现在配置的可信来源中，但精确的 scheme+host+port
+    未命中白名单，则拒绝，不再用 request.url.scheme 做同源回退。这样在
+    TLS 终止后容器只看到 HTTP 时，也不会把 http://同一公网主机 放行。
     """
     origin = (origin or '').strip()
     if not origin:
@@ -148,6 +155,22 @@ def _origin_is_trusted(origin: str, request: Request) -> bool:
     netloc = (parsed.netloc or '').lower()
     if scheme not in ('http', 'https') or not netloc:
         return False
+    try:
+        origin_host = (parsed.hostname or '').lower()
+    except ValueError:
+        return False
+    if origin_host:
+        configured_hosts: set[str] = set()
+        for item in allowed:
+            try:
+                host_i = urlparse(item).hostname
+            except ValueError:
+                host_i = None
+            if host_i:
+                configured_hosts.add(host_i.lower())
+        if origin_host in configured_hosts:
+            # 主机名已在白名单/公网来源中，但精确 origin 未命中：不得回退到请求 scheme。
+            return False
     host = (request.headers.get('host') or '').strip().lower()
     if not host:
         host = (request.url.netloc or '').lower()

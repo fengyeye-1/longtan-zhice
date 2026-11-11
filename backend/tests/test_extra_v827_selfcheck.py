@@ -43,9 +43,9 @@ def csv_upload(c, h, kind, data, policy=None):
 
 def test_health_version_is_827(c):
     h = c.get("/api/health").json()
-    assert h["version"] == "8.2.9" == APP_VERSION
-    assert h["frontend_expected"] == "8.2.9"
-    assert h["build_id"] == BUILD_ID == "v829-audit-20261111"
+    assert h["version"] == "8.2.10" == APP_VERSION
+    assert h["frontend_expected"] == "8.2.10"
+    assert h["build_id"] == BUILD_ID == "v8210-audit-20261111"
     assert h.get("data_persistence") == "local_sqlite"
     assert "Render" in (h.get("data_persistence_note") or "")
 

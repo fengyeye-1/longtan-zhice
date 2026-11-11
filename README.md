@@ -1,6 +1,6 @@
 # 陇碳智策 · 设备节能与碳减排评估平台
 
-当前版本 **8.2.9**（Vue + FastAPI）。帮助矿山企业把设备能省多少电、相应少排多少碳、投资多久能收回，按有据可查的数据算清楚。
+当前版本 **8.2.10**（Vue + FastAPI）。帮助矿山企业把设备能省多少电、相应少排多少碳、投资多久能收回，按有据可查的数据算清楚。
 
 金徽公开案例为只读示范；上传企业数据会生成会话专属项目，**不会隐式继承**金徽 200kW / 100 万元投资 / 电价假设。
 
@@ -16,7 +16,7 @@
 
 双击 `一键启动.bat`，浏览器打开 http://127.0.0.1:8000
 
-脚本会使用或创建 `backend/.venv`，安装依赖，并由 uvicorn 同时托管 API 与已构建的 `frontend/dist`。请保持弹出的命令行窗口开着。脚本会核对 /api/health 的版本号是否为 8.2.9，避免误开旧进程。
+脚本会使用或创建 `backend/.venv`，安装依赖，并由 uvicorn 同时托管 API 与已构建的 `frontend/dist`。请保持弹出的命令行窗口开着。脚本会核对 /api/health 的版本号是否为 8.2.10，避免误开旧进程。
 
 若页面异常：先关掉占用 8000 端口的旧窗口，再重新双击，浏览器使用 Ctrl+F5。
 
@@ -31,12 +31,12 @@
 
 
 
-## 身份与权限（V8.2.9）
+## 身份与权限（V8.2.10）
 
 - **工作区会话**：浏览器持有成对的 `ltzs_sid` + 带时间戳的 HMAC Cookie `ltzs_stk`。验证通过后，可恢复该所有者名下的全部企业项目。服务端会检查签发时间、过期和撤销；浏览器 Cookie 的 7 天有效期不能代替这项校验。页面提供「退出当前工作区」，对应 `POST /api/session/logout`。8.2.7 无签发时间的旧格式 Cookie 不再被接受。
 - **项目 Token**（`X-Project-Token`）：只对应一个项目，可用于列出、激活、导出该项目。不能自动授权同一所有者的其他（兄弟）项目。退出工作区**不会**自动作废已发放的项目凭证；需要作废时请使用「轮换项目凭证」或「撤销项目凭证」（`POST /api/session/project-token/rotate` / `revoke`）。
 - **未签名的历史 `X-Session-Id`**：服务器重启后，仅重放会话号不会重新签发信任凭证，也不能接管历史身份。
-- **改变状态的请求**会校验 `Origin`（或 `Referer`）：只接受 CORS 白名单、`LTZS_PUBLIC_ORIGIN`，或与当前请求 scheme+host+port 完全同源的来源。不要用客户端可伪造的 `X-Forwarded-Proto` 判断 CSRF。无 Origin 的 pytest / 本地脚本按非浏览器 API 客户端兼容；跨站或跨协议同主机 POST 会被拒绝。
+- **改变状态的请求**会校验 `Origin`（或 `Referer`）：只接受 CORS 白名单、`LTZS_PUBLIC_ORIGIN`，或与当前请求 scheme+host+port 完全同源的来源。若 Origin 的主机名已出现在这些配置来源中，但 scheme+host+port 并未精确命中，则直接拒绝，不再回退到容器看到的请求协议（避免 TLS 终止后把 `http://` 同一公网主机误判为同源）。不要用客户端可伪造的 `X-Forwarded-Proto` 判断 CSRF。无 Origin 的 pytest / 本地脚本按非浏览器 API 客户端兼容；跨站或跨协议同主机 POST 会被拒绝。8.2.9 已改为比较完整 scheme+host+port；8.2.10 补上反代 HTTP 场景下的主机名锁定。
 - **健康检查** `GET /api/health` 不会创建会话或票据。公网 HTTPS 请设置 `LTZS_COOKIE_SECURE=1`。
 
 ## 手动启动
@@ -58,7 +58,7 @@ npm ci
 npm run build   # 产物写入 frontend/dist，由后端静态托管
 ```
 
-健康检查：`GET /api/health` 应返回 `ok: true` 且 `version` 为 `8.2.9`，与页面页眉版本一致。
+健康检查：`GET /api/health` 应返回 `ok: true` 且 `version` 为 `8.2.10`，与页面页眉版本一致。
 
 ## 验收测试
 
