@@ -148,3 +148,24 @@ details.method .body { margin-top: 10px; font-size: 12px; color: var(--muted); l
   .cardrow, .cardrow-2, .cardrow-4, .twocol, .tech-cards { grid-template-columns: 1fr; }
   .main { padding: 16px; }
 }
+
+/* 宽表：保持列宽并出现可见的横向滚动，避免中文被压成逐字换行 */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+.table-scroll > table.data {
+  min-width: 36rem;
+  width: max(100%, 36rem);
+}
+.table-scroll-hint { display: none; font-size: 12px; margin: 6px 0 0; }
+@media (max-width: 768px) {
+  .table-scroll-hint { display: block; }
+  .table-scroll > table.data th,
+  .table-scroll > table.data td {
+    white-space: nowrap;
+    word-break: normal;
+  }
+  .btn { min-height: 40px; }
+}

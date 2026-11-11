@@ -253,7 +253,8 @@ def test_delivery_safety_detects_projects(tmp_path):
 
 def test_restore_demo_forbidden_on_user_case():
     c = _client()
-    c.get('/api/health')
+    # 健康检查不再创建会话；改用 /api/session 取得工作区身份后再测恢复限制。
+    c.get('/api/session')
     sid = c.cookies.get('ltzs_sid')
     assert sid
     tok = store._ctx_session.set(sid)

@@ -36,3 +36,11 @@ export function applyPayload(payload: any) {
   else if (payload?.case_id) state.activeId = payload.case_id
   else if (payload?.results?.case?.case_id) state.activeId = payload.results.case.case_id
 }
+
+export function clearPrivatePageCache() {
+  state.results = null
+  state.cases = []
+  state.activeId = ''
+  state.versions = []
+  state.error = ''
+}

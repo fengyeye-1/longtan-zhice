@@ -1,10 +1,14 @@
 # Contest demo should use the local Windows launcher (一键启动.bat).
-# plan: free has an ephemeral filesystem. The container SQLite at
-# backend/data/projects.sqlite is deleted on sleep, restart, or redeploy.
-# Do not promise to keep enterprise data on this free instance.
-# This Blueprint does not provision a persistent disk or managed database.
-# For durable online storage, attach a persistent disk or an external database
-# and complete backup/restore acceptance; do not claim cloud data will be kept.
+# Free-plan filesystems are ephemeral. The container SQLite at
+# backend/data/projects.sqlite may be lost after sleep, wake (a new
+# container may start), restart, or redeploy. Data may survive a
+# same-container pause, but is not guaranteed. Do not promise to keep
+# enterprise data on a free instance. This Blueprint does not provision
+# a persistent disk or managed database.
+# For HTTPS production set:
+#   LTZS_COOKIE_SECURE=1
+#   LTZS_PUBLIC_ORIGIN=https://your-public-host
+# Do not trust client-supplied X-Forwarded-Proto for CSRF origin checks.
 services:
   - type: web
     name: longtan-zhice
@@ -14,3 +18,6 @@ services:
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: LTZS_COOKIE_SECURE
+        value: "1"
+      # Set LTZS_PUBLIC_ORIGIN to the public https origin of this service.

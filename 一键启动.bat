@@ -3,8 +3,8 @@ cd /d "%~dp0"
 set "BACKEND=%~dp0backend"
 set "PY=%BACKEND%\.venv\Scripts\python.exe"
 set "URL=http://127.0.0.1:8000/"
-set "NEED_VER=8.2.8"
-set "NEED_BUILD=v828-audit-20261110"
+set "NEED_VER=8.2.9"
+set "NEED_BUILD=v829-audit-20261111"
 
 echo ========================================
 echo  LongTan ZhiCe - one click start

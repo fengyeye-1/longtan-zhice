@@ -236,5 +236,5 @@ def test_report_snapshot_and_archive_after_rename(c):
 
 def test_health_version_is_824(c):
     h = c.get("/api/health").json()
-    assert h["version"] == "8.2.8"
-    assert h["frontend_expected"] == "8.2.8"
+    assert h["version"] == "8.2.9"
+    assert h["frontend_expected"] == "8.2.9"

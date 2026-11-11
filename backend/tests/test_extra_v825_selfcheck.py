@@ -132,8 +132,8 @@ def test_energy_csv_javascript_url_sanitized(c):
 
 def test_health_version_is_825(c):
     h = c.get("/api/health").json()
-    assert h["version"] == "8.2.8"
-    assert h["frontend_expected"] == "8.2.8"
+    assert h["version"] == "8.2.9"
+    assert h["frontend_expected"] == "8.2.9"
     assert h["build_id"]
     assert h["service"]
 

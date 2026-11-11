@@ -43,13 +43,16 @@ def cookie_headers(client: TestClient):
 
 def test_health_version_is_828(c):
     h = c.get("/api/health").json()
-    assert h["version"] == "8.2.8" == APP_VERSION
-    assert h["frontend_expected"] == "8.2.8"
-    assert h["build_id"] == BUILD_ID == "v828-audit-20261110"
+    assert h["version"] == "8.2.9" == APP_VERSION
+    assert h["frontend_expected"] == "8.2.9"
+    assert h["build_id"] == BUILD_ID == "v829-audit-20261111"
     assert h.get("data_persistence") == "local_sqlite"
     note = h.get("data_persistence_note") or ""
     assert "Render" in note
+    assert "SnapDeploy" in note
     assert "不能承诺" in note or "持续保存" in note
+    assert "示范" in note
+    assert "公开代码仓库" in note
 
 
 def test_p0_01_replay_header_sid_after_restart_does_not_reissue_trust():

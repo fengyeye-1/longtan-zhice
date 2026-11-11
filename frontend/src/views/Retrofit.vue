@@ -709,27 +709,50 @@ onMounted(async () => {
       <p class="muted" v-if="trialMsg">{{ trialMsg }}</p>
     </div>
 
-    <table class="data" v-if="retrofits.length" style="margin-top:12px">
-      <thead>
-        <tr><th>名称</th><th>目标设备</th><th>测算方法</th><th>来源</th><th>投资</th><th></th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="r in retrofits" :key="r.id" :class="{ active: form.selected_measure_id === r.id }">
-          <td>{{ r.name }}</td>
-          <td>{{ r.target_device }}</td>
-          <td>{{ methodLabel(r.method_code || r.calculation_method) }}</td>
-          <td><span class="tag">{{ originBadge(r) }}</span></td>
-          <td class="num">{{ r.investment_cny ?? '—' }}</td>
-          <td class="btn-row">
+    <div v-if="retrofits.length" class="measure-list" style="margin-top:12px">
+      <div class="device-card-list">
+        <div class="device-card" v-for="r in retrofits" :key="'mc-' + r.id" :class="{ active: form.selected_measure_id === r.id }">
+          <div class="device-card-title">{{ r.name }}</div>
+          <div class="device-card-meta">
+            <span>目标：{{ r.target_device }}</span>
+            <span>{{ methodLabel(r.method_code || r.calculation_method) }}</span>
+            <span class="tag">{{ originBadge(r) }}</span>
+            <span>投资 {{ r.investment_cny ?? '—' }}</span>
+          </div>
+          <div class="btn-row device-card-actions">
             <button class="btn secondary" type="button" @click="selectMeasure(r.id)">设为当前</button>
             <button class="btn secondary" type="button" @click="startEditMeasure(r)">编辑</button>
             <button class="btn secondary" type="button" @click="copyMeasure(r.id)">复制</button>
             <button class="btn secondary" type="button" @click="removeMeasure(r.id)">删除</button>
             <button class="btn secondary" type="button" v-if="r.previous_snapshot" @click="revertMeasure(r.id)">恢复上一版</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+          </div>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="data device-table-wide">
+          <thead>
+            <tr><th>名称</th><th>目标设备</th><th>测算方法</th><th>来源</th><th>投资</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in retrofits" :key="r.id" :class="{ active: form.selected_measure_id === r.id }">
+              <td>{{ r.name }}</td>
+              <td>{{ r.target_device }}</td>
+              <td>{{ methodLabel(r.method_code || r.calculation_method) }}</td>
+              <td><span class="tag">{{ originBadge(r) }}</span></td>
+              <td class="num">{{ r.investment_cny ?? '—' }}</td>
+              <td class="btn-row">
+                <button class="btn secondary" type="button" @click="selectMeasure(r.id)">设为当前</button>
+                <button class="btn secondary" type="button" @click="startEditMeasure(r)">编辑</button>
+                <button class="btn secondary" type="button" @click="copyMeasure(r.id)">复制</button>
+                <button class="btn secondary" type="button" @click="removeMeasure(r.id)">删除</button>
+                <button class="btn secondary" type="button" v-if="r.previous_snapshot" @click="revertMeasure(r.id)">恢复上一版</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="muted table-scroll-hint">宽表可左右滑动查看，窄屏请使用上方卡片操作</p>
+      </div>
+    </div>
 
     <div class="card" v-if="sa" style="margin-top:12px">
       <h3>当前措施结果</h3>
@@ -831,8 +854,10 @@ onMounted(async () => {
   padding: 12px;
   background: #fff;
 }
-.device-card-title { font-weight: 600; margin-bottom: 6px; }
+.device-card-title { font-weight: 600; margin-bottom: 6px; word-break: normal; overflow-wrap: break-word; }
 .device-card-meta { display: flex; flex-wrap: wrap; gap: 8px 12px; color: #555; font-size: 13px; margin-bottom: 8px; }
+.device-card-meta > span { white-space: nowrap; }
+.device-card.active { border-color: #111; }
 .device-card-actions .btn { min-height: 36px; min-width: 64px; white-space: nowrap; }
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table-scroll-hint { display: none; font-size: 12px; }

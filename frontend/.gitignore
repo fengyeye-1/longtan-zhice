@@ -8,7 +8,8 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
+# Dockerfile serves the prebuilt frontend; track dist in this public deploy repo.
+# dist
 dist-ssr
 *.local
 

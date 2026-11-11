@@ -30,6 +30,10 @@ SESSION_SECRET_PATH = ROOT / '.session_hmac'
 
 # 服务端会话票据有效期（秒）。浏览器 Cookie 的 max_age 不能代替这项校验。
 SESSION_TTL_SECONDS = int(os.environ.get('LTZS_SESSION_TTL_SECONDS', str(7 * 86400)))
+# 空闲匿名会话回收窗口与容量上限（不删除仍持有项目的工作区会话）。
+ANON_SESSION_IDLE_SECONDS = int(os.environ.get('LTZS_ANON_SESSION_IDLE_SECONDS', str(30 * 60)))
+MAX_ANON_SESSIONS = int(os.environ.get('LTZS_MAX_ANON_SESSIONS', '200'))
+_LAST_SESSION_SWEEP_TS = 0
 # 权限模型：
 # - 已验证的会话 Cookie（ltzs_sid + 未过期且未撤销的 ltzs_stk）= 工作区级身份，可恢复该所有者的全部项目。
 # - 项目 Token（X-Project-Token）= 单项目访问凭证，只能读取对应项目，不得提升为工作区凭证。
@@ -776,6 +780,87 @@ def session_ttl_seconds() -> int:
     return int(SESSION_TTL_SECONDS)
 
 
+def _blank_session(sid: str) -> dict[str, Any]:
+    now = _now_ts()
+    return {
+        "session_id": sid,
+        "active_case_id": JINHUI_ID,
+        "project_token": None,
+        "owned_case_ids": set(),
+        "created_at": now,
+        "last_seen": now,
+    }
+
+
+def _touch_session(sess: dict[str, Any] | None) -> None:
+    if sess is not None:
+        sess["last_seen"] = _now_ts()
+
+
+def _is_anonymous_session(sess: dict[str, Any] | None) -> bool:
+    if not sess:
+        return False
+    owned = sess.get("owned_case_ids") or set()
+    if owned:
+        return False
+    if sess.get("project_token"):
+        return False
+    active = sess.get("active_case_id")
+    if active not in (None, "", JINHUI_ID):
+        return False
+    return True
+
+
+def sweep_expired_session_state() -> dict[str, int]:
+    """清理过期/已撤销票据与空闲匿名内存会话。不删除项目、版本或有效工作区会话。"""
+    global _LAST_SESSION_SWEEP_TS
+    now = _now_ts()
+    deleted_tickets = 0
+    evicted_sessions = 0
+    with _LOCK:
+        conn = _db()
+        cur = conn.execute(
+            "DELETE FROM session_tickets WHERE expires_at < ? OR (revoked=1 AND expires_at < ?)",
+            (now, now),
+        )
+        deleted_tickets = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
+        conn.commit()
+        conn.close()
+        idle = int(ANON_SESSION_IDLE_SECONDS)
+        to_drop: list[str] = []
+        for sid, sess in list(_SESSIONS.items()):
+            if not _is_anonymous_session(sess):
+                continue
+            last = int(sess.get("last_seen") or sess.get("created_at") or 0)
+            if last and now - last > idle:
+                to_drop.append(sid)
+        for sid in to_drop:
+            _SESSIONS.pop(sid, None)
+            evicted_sessions += 1
+        cap = max(1, int(MAX_ANON_SESSIONS))
+        anons = [
+            (sid, int((_SESSIONS[sid].get("last_seen") or _SESSIONS[sid].get("created_at") or 0)))
+            for sid in list(_SESSIONS)
+            if _is_anonymous_session(_SESSIONS[sid])
+        ]
+        if len(anons) > cap:
+            anons.sort(key=lambda item: item[1])
+            for sid, _ts in anons[: len(anons) - cap]:
+                _SESSIONS.pop(sid, None)
+                evicted_sessions += 1
+        _LAST_SESSION_SWEEP_TS = now
+    return {"deleted_tickets": deleted_tickets, "evicted_sessions": evicted_sessions}
+
+
+def maybe_sweep_session_state(force: bool = False, min_interval: int = 30) -> dict[str, int] | None:
+    """默认最多每 30 秒清扫一次；测试可 force=True。"""
+    global _LAST_SESSION_SWEEP_TS
+    now = _now_ts()
+    if not force and (now - int(_LAST_SESSION_SWEEP_TS or 0)) < max(0, int(min_interval)):
+        return None
+    return sweep_expired_session_state()
+
+
 def _sign_session_ticket(sid: str, issued_at: int) -> str:
     payload = f"{sid}:{int(issued_at)}".encode("utf-8")
     return hmac.new(_session_secret(), payload, hashlib.sha256).hexdigest()
@@ -874,26 +959,18 @@ def issue_session_mac(sid: str, issued_at: int | None = None, *, rotate: bool = 
 
 
 def verify_session_mac(sid: str | None, mac: str | None) -> bool:
-    """校验 Cookie 签名、服务端过期与撤销状态。不因校验而签发新票据（旧格式兼容轮换除外）。"""
+    """校验 Cookie 签名、服务端过期与撤销状态。
+
+    自 8.2.9 起不再接受 8.2.7 无签发时间的旧格式 HMAC。旧格式无法做服务端
+    撤销与过期检查，若继续兼容，注销后仍可能凭历史签名恢复工作区。
+    """
     if not sid or not mac:
         return False
     issued_at, digest = _parse_session_mac(str(mac))
     now = _now_ts()
     ttl = session_ttl_seconds()
     if issued_at is None:
-        # 兼容 8.2.7 仅签 SID 的旧 Cookie：校验通过后立即轮换为带时间戳票据。
-        expected_legacy = hmac.new(_session_secret(), sid.encode("utf-8"), hashlib.sha256).hexdigest()
-        try:
-            if not hmac.compare_digest(expected_legacy, digest):
-                return False
-        except Exception:
-            return False
-        issued_at = now
-        try:
-            issue_session_mac(sid, issued_at=issued_at, rotate=True)
-        except Exception:
-            pass
-        return True
+        return False
     expected = _sign_session_ticket(sid, issued_at)
     try:
         if not hmac.compare_digest(expected, digest):
@@ -946,12 +1023,7 @@ def revoke_session(sid: str | None = None) -> str:
             _SESSIONS.pop(target, None)
     new_sid = secrets.token_urlsafe(16)
     with _LOCK:
-        _SESSIONS[new_sid] = {
-            "session_id": new_sid,
-            "active_case_id": JINHUI_ID,
-            "project_token": None,
-            "owned_case_ids": set(),
-        }
+        _SESSIONS[new_sid] = _blank_session(new_sid)
     _ctx_session.set(new_sid)
     _ctx_token.set(None)
     _ctx_auth.set({"token": None, "rebound": False, "scope": AUTH_SCOPE_PUBLIC})
@@ -996,34 +1068,26 @@ def set_request_context(
 
     token_cid = _case_id_for_token(token) if token else None
 
+    try:
+        maybe_sweep_session_state()
+    except Exception:
+        pass
+
     with _LOCK:
         if cookie_verified is False and token_cid:
             # HTTP 层：无有效会话票据时，忽略声称的 SID，避免 A的SID+B的Token 展开 A 的项目
             sid = secrets.token_urlsafe(16)
-            _SESSIONS[sid] = {
-                "session_id": sid,
-                "active_case_id": JINHUI_ID,
-                "project_token": None,
-                "owned_case_ids": set(),
-            }
+            _SESSIONS[sid] = _blank_session(sid)
         elif identity_trusted and claimed:
             sid = claimed
             if sid not in _SESSIONS:
-                _SESSIONS[sid] = {
-                    "session_id": sid,
-                    "active_case_id": JINHUI_ID,
-                    "project_token": None,
-                    "owned_case_ids": set(),
-                }
+                _SESSIONS[sid] = _blank_session(sid)
+            else:
+                _touch_session(_SESSIONS[sid])
         else:
             # 未校验身份：一律签发全新会话，绝不沿用请求头里的历史 SID。
             sid = secrets.token_urlsafe(16)
-            _SESSIONS[sid] = {
-                "session_id": sid,
-                "active_case_id": JINHUI_ID,
-                "project_token": None,
-                "owned_case_ids": set(),
-            }
+            _SESSIONS[sid] = _blank_session(sid)
 
     _ctx_session.set(sid)
     _ctx_token.set(token)
@@ -1085,12 +1149,9 @@ def _session() -> dict[str, Any]:
     sid = current_session_id()
     with _LOCK:
         if sid not in _SESSIONS:
-            _SESSIONS[sid] = {
-                'session_id': sid,
-                'active_case_id': JINHUI_ID,
-                'project_token': None,
-                'owned_case_ids': set(),
-            }
+            _SESSIONS[sid] = _blank_session(sid)
+        else:
+            _touch_session(_SESSIONS[sid])
         return _SESSIONS[sid]
 
 
@@ -1241,12 +1302,8 @@ def authorize_and_activate(
         if not cid or cid not in _CASES:
             raise PermissionError('无效项目凭证')
         case = _CASES[cid]
-        sess = _SESSIONS.setdefault(sid, {
-            'session_id': sid,
-            'active_case_id': JINHUI_ID,
-            'project_token': None,
-            'owned_case_ids': set(),
-        })
+        sess = _SESSIONS.setdefault(sid, _blank_session(sid))
+        _touch_session(sess)
         if attach_only:
             bind_request_token(token)
             return deepcopy(case)
@@ -1637,6 +1694,93 @@ def reset_session_demo() -> CaseState:
     sess['project_token'] = None
     bind_request_token(None)
     return get_case(JINHUI_ID)
+
+
+def rotate_project_token(case_id: str | None = None) -> str:
+    """轮换当前（或指定）项目的访问 Token：旧 Token 立即失效，返回新 Token。
+
+    需要已对该项目拥有访问权（工作区会话或仍有效的项目 Token）。
+    公开示范不可轮换。退出工作区不会自动调用本函数。
+    """
+    case = get_case(case_id)
+    if case.case_id == JINHUI_ID or case.protected or case.is_demo:
+        raise PermissionError("公开示范没有可轮换的项目凭证")
+    new_tok = _new_token()
+    with _LOCK:
+        live = _CASES.get(case.case_id)
+        if live is None:
+            raise KeyError(f"案例不存在: {case.case_id}")
+        old = live.access_token
+        previous = deepcopy(live)
+        live.access_token = new_tok
+        try:
+            if old:
+                _TOKENS.pop(old, None)
+            _TOKENS[new_tok] = case.case_id
+            _persist_case(live)
+        except Exception:
+            live.access_token = previous.access_token
+            if old:
+                _TOKENS[old] = case.case_id
+            _TOKENS.pop(new_tok, None)
+            raise
+        for sess in _SESSIONS.values():
+            if old and sess.get("project_token") == old:
+                sess["project_token"] = new_tok
+        sess = _SESSIONS.get(current_session_id())
+        if sess is not None:
+            sess["project_token"] = new_tok
+        bind_request_token(new_tok)
+    return new_tok
+
+
+def revoke_project_token(case_id: str | None = None) -> None:
+    """撤销当前项目已发放的访问 Token，不把新凭证交给调用方。
+
+    仍可通过已验证的工作区会话访问该项目，并可再次轮换得到新凭证。
+    仅持有旧 Token、没有工作区会话的调用方在撤销后将失去访问权。
+    公开示范不可撤销。
+    """
+    case = get_case(case_id)
+    if case.case_id == JINHUI_ID or case.protected or case.is_demo:
+        raise PermissionError("公开示范没有可撤销的项目凭证")
+    workspace = current_auth_scope() == AUTH_SCOPE_WORKSPACE
+    new_tok = _new_token()
+    with _LOCK:
+        live = _CASES.get(case.case_id)
+        if live is None:
+            raise KeyError(f"案例不存在: {case.case_id}")
+        old = live.access_token
+        previous = deepcopy(live)
+        live.access_token = new_tok
+        try:
+            if old:
+                _TOKENS.pop(old, None)
+            _TOKENS[new_tok] = case.case_id
+            _persist_case(live)
+        except Exception:
+            live.access_token = previous.access_token
+            if old:
+                _TOKENS[old] = case.case_id
+            _TOKENS.pop(new_tok, None)
+            raise
+        for sess in _SESSIONS.values():
+            if old and sess.get("project_token") == old:
+                sess["project_token"] = new_tok if workspace else None
+        if workspace:
+            sess = _SESSIONS.get(current_session_id())
+            if sess is not None:
+                sess["project_token"] = new_tok
+            bind_request_token(new_tok)
+        else:
+            sess = _SESSIONS.get(current_session_id())
+            if sess is not None:
+                sess["project_token"] = None
+                if case.case_id in (sess.get("owned_case_ids") or set()):
+                    sess["owned_case_ids"].discard(case.case_id)
+                if sess.get("active_case_id") == case.case_id:
+                    sess["active_case_id"] = JINHUI_ID
+            bind_request_token(None)
 
 
 def bind_request_token(token: str | None) -> None:

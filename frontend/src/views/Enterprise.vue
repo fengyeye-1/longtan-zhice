@@ -182,7 +182,7 @@ async function switchEnterprise(id: string) {
 <template>
   <div class="eyebrow">企业数据</div>
   <h1>先把企业的用电情况放进来</h1>
-  <p class="lead">有Excel就直接上传。要一份完全空白的企业请点「新建空白企业」；「恢复公开案例」会加载金徽示范，复制后再改会保留公开历史并标明来源。</p>
+  <p class="lead">有Excel就直接上传。要一份完全空白的企业请点「新建空白企业」；「恢复公开案例」会加载写在应用代码里的金徽示范，复制后再改会保留公开历史并标明来源。免费在线实例休眠后私有录入可能丢失，请同时导出备份，不要把企业数据提交到公开代码仓库。</p>
 
   <div class="card" style="margin-bottom:16px">
     <label class="field">我的企业 / 切换
@@ -207,7 +207,8 @@ async function switchEnterprise(id: string) {
   <div class="section">
     <h2>企业这几年用了多少电？</h2>
     <p class="muted">公司全年用电量；单台设备数据需要另外填写，不会自动分摊。</p>
-    <table class="data" v-if="energy.length">
+        <div class="table-scroll" v-if="energy.length">
+      <table class="data">
       <thead>
         <tr><th>年份</th><th>用电 万kWh</th><th>电费 万元</th><th>平均每度电费用（元）</th><th>标记</th></tr>
       </thead>
@@ -221,6 +222,8 @@ async function switchEnterprise(id: string) {
         </tr>
       </tbody>
     </table>
+      <p class="muted table-scroll-hint">宽表可左右滑动查看，避免文字被压成单字换行</p>
+    </div>
   </div>
 
   <div class="section">
@@ -242,7 +245,8 @@ async function switchEnterprise(id: string) {
     <div v-if="preview" class="section" style="border:none;margin-top:12px;padding-top:0">
       <h3>预览前 20 行 · 共 {{ preview.row_count }} 行</h3>
       <p class="notice">{{ preview.will_replace }}</p>
-      <table class="data" v-if="preview.preview_rows?.length">
+            <div class="table-scroll" v-if="preview.preview_rows?.length">
+        <table class="data">
         <thead>
           <tr>
             <th v-for="c in preview.columns" :key="c">{{ c }}
@@ -256,8 +260,11 @@ async function switchEnterprise(id: string) {
           </tr>
         </tbody>
       </table>
+        <p class="muted table-scroll-hint">宽表可左右滑动查看，避免文字被压成单字换行</p>
+      </div>
       <h3 style="margin-top:12px">核对一下表格列名</h3>
-      <table class="data">
+            <div class="table-scroll">
+        <table class="data">
         <thead>
           <tr><th>用户列</th><th>映射到标准字段</th></tr>
         </thead>
@@ -273,6 +280,8 @@ async function switchEnterprise(id: string) {
           </tr>
         </tbody>
       </table>
+        <p class="muted table-scroll-hint">宽表可左右滑动查看，避免文字被压成单字换行</p>
+      </div>
       <div v-if="mappingError" class="error">{{ mappingError }}</div>
       <div v-if="kind==='energy'" class="card" style="margin:12px 0">
         <p class="muted">导入能源表时请明确电价策略。默认保留您已经手动设定的电价，不会静默覆盖。</p>
@@ -297,7 +306,8 @@ async function switchEnterprise(id: string) {
       <input style="max-width:220px" v-model="versionLabel" placeholder="版本备注（可选）" />
       <button class="btn secondary" @click="saveVer">保存当前版本</button>
     </div>
-    <table class="data" v-if="versions.length">
+        <div class="table-scroll" v-if="versions.length">
+      <table class="data">
       <thead><tr><th>标签</th><th>案例</th><th>时间</th><th></th></tr></thead>
       <tbody>
         <tr v-for="v in versions" :key="v.version_id">
@@ -308,6 +318,8 @@ async function switchEnterprise(id: string) {
         </tr>
       </tbody>
     </table>
+      <p class="muted table-scroll-hint">宽表可左右滑动查看，避免文字被压成单字换行</p>
+    </div>
     <p class="muted" v-else>暂无已保存版本。</p>
   </div>
 </template>

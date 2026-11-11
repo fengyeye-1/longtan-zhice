@@ -32,6 +32,13 @@ export function setProjectToken(token: string | null | undefined) {
   } catch { /* */ }
 }
 
+export function clearLocalWorkspace() {
+  try {
+    localStorage.removeItem(SESSION_KEY)
+    localStorage.removeItem(TOKEN_KEY)
+  } catch { /* */ }
+}
+
 function authHeaders(): Record<string, string> {
   const h: Record<string, string> = {}
   const sid = getSessionId()
@@ -85,8 +92,14 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health: () => req<{ ok: boolean; version?: string; build_id?: string; service?: string }>('/api/health'),
+  health: () => req<{ ok: boolean; version?: string; build_id?: string; service?: string; data_persistence_note?: string }>('/api/health'),
   session: () => req<any>('/api/session'),
+  logoutWorkspace: () =>
+    req<any>('/api/session/logout', { method: 'POST' }),
+  rotateProjectToken: () =>
+    req<any>('/api/session/project-token/rotate', { method: 'POST' }),
+  revokeProjectToken: () =>
+    req<any>('/api/session/project-token/revoke', { method: 'POST' }),
   cases: () => req<{ cases: any[]; active: string; session_id?: string; project_token?: string }>('/api/cases'),
   activate: (id: string) =>
     req<any>(`/api/cases/${id}/activate`, { method: 'POST' }),

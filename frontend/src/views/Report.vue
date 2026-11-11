@@ -149,7 +149,8 @@ loadPreview()
 
   <div class="section">
     <h2>本次测算摘要</h2>
-    <table class="data">
+        <div class="table-scroll">
+      <table class="data">
       <tbody>
         <tr><th>案例</th><td>{{ state.results?.case?.name }}</td></tr>
         <tr><th>算到哪里</th><td>设备节电及相应电力排放变化（不是整厂碳核算）</td></tr>
@@ -169,11 +170,14 @@ loadPreview()
         <tr><th>计算情景指纹</th><td class="mono">{{ snap?.snapshot_id || '—' }}（仅标识本次测算输入；历史归档请用导出编号 export_id）</td></tr>
       </tbody>
     </table>
+      <p class="muted table-scroll-hint">宽表可左右滑动查看，避免文字被压成单字换行</p>
+    </div>
   </div>
 
   <div class="section" v-if="schemes.length && sa?.technology_type !== 'pump'">
     <h2>小时情景对照</h2>
-    <table class="data">
+        <div class="table-scroll">
+      <table class="data">
       <thead><tr><th>小时</th><th>节电</th><th>电力相关减排</th><th>节费</th><th>回收期</th></tr></thead>
       <tbody>
         <tr v-for="s in schemes" :key="s.hours">
@@ -185,6 +189,8 @@ loadPreview()
         </tr>
       </tbody>
     </table>
+      <p class="muted table-scroll-hint">宽表可左右滑动查看，避免文字被压成单字换行</p>
+    </div>
   </div>
 
   <div class="section">

@@ -97,7 +97,7 @@ store.init_store()
 # CSRF / Origin 防护：CORS 只约束带凭证的跨域 *读取*，不能代替改变状态的 Origin 校验。
 # 策略：
 # 1) 安全方法（GET/HEAD/OPTIONS）不检查。
-# 2) 若存在 Origin，必须属于 CORS 白名单，或与本请求 Host 构成同源（本机一键启动、局域网 IP 直开）。
+# 2) 若存在 Origin，必须属于 CORS 白名单或 LTZS_PUBLIC_ORIGIN，或与本请求的 scheme+host+port 完全同源（本机一键启动、局域网 IP 直开）。不要用客户端可伪造的 X-Forwarded-Proto 判断 CSRF 来源。
 # 3) 若存在 Referer 而无 Origin，按 Referer 的 origin 执行同样规则。
 # 4) 无 Origin、无 Referer：视为非浏览器 API 客户端（pytest、本地脚本）。
 #    浏览器跨站表单会带 Origin；不把「无 Origin」当成匿名浏览器绕过，因为现代浏览器跨站 POST 必带 Origin。
@@ -122,12 +122,25 @@ def _request_origin(request: Request) -> str | None:
     return None
 
 
+def _configured_trusted_origins() -> set[str]:
+    """CORS 白名单 + 显式配置的公网来源。每次请求读取环境变量，便于测试与部署切换。"""
+    allowed = {o.strip().rstrip('/') for o in _origins if o}
+    public = os.environ.get('LTZS_PUBLIC_ORIGIN', '').strip().rstrip('/')
+    if public:
+        allowed.add(public)
+    return allowed
+
+
 def _origin_is_trusted(origin: str, request: Request) -> bool:
-    """同源或白名单来源才允许改变状态。禁止把任意 localhost 端口都当成可信。"""
+    """同源或白名单来源才允许改变状态。比较完整的 scheme+host+port。
+
+    反向代理场景请设置 LTZS_PUBLIC_ORIGIN=https://公开域名 ，不要信任
+    客户端可伪造的 X-Forwarded-Proto。本机一键启动的 HTTP 同源仍然有效。
+    """
     origin = (origin or '').strip()
     if not origin:
         return False
-    allowed = {o.strip().rstrip('/') for o in _origins if o}
+    allowed = _configured_trusted_origins()
     if origin.rstrip('/') in allowed:
         return True
     parsed = urlparse(origin)
@@ -138,7 +151,10 @@ def _origin_is_trusted(origin: str, request: Request) -> bool:
     host = (request.headers.get('host') or '').strip().lower()
     if not host:
         host = (request.url.netloc or '').lower()
-    return netloc == host
+    req_scheme = (request.url.scheme or '').lower()
+    if req_scheme not in ('http', 'https') or not host:
+        return False
+    return f'{scheme}://{netloc}' == f'{req_scheme}://{host}'
 
 
 def _csrf_guard(request: Request) -> JSONResponse | None:
@@ -458,6 +474,9 @@ def _apply_scenario_to_case(case: CaseState, body: UpdateScenarioRequest) -> lis
 @app.middleware('http')
 async def session_middleware(request: Request, call_next):
     if request.url.path.startswith('/api'):
+        # 健康检查不得创建会话身份或 SQLite 票据。
+        if request.url.path == '/api/health' and request.method.upper() in {'GET', 'HEAD'}:
+            return await call_next(request)
         cookie_sid = request.cookies.get('ltzs_sid')
         cookie_mac = request.cookies.get('ltzs_stk')
         header_sid = request.headers.get('X-Session-Id')
@@ -498,9 +517,12 @@ def health():
         'frontend_expected': APP_VERSION,
         'data_persistence': 'local_sqlite',
         'data_persistence_note': (
-            '比赛请优先使用本机一键启动；数据保存在本机 backend/data。'
-            '免费 Render 实例休眠或重新部署会清空容器内 SQLite，不能承诺持续保存企业数据。'
-            '若需在线持久化，必须改用外部托管数据库或持久卷，并自行定期导出 TXT/CSV/HTML 备份。'
+            '比赛请优先使用本机一键启动；本机数据保存在 backend/data，重启后仍在。'
+            '免费云实例（含 SnapDeploy、Render 等）空闲约 15 分钟可能休眠；唤醒可能需要约 60–90 秒，且可能拉起新容器。'
+            '同一容器短暂暂停后数据可能还在，但不能保证、也不能承诺休眠/唤醒、重启或重新部署后持续保存企业数据，请勿把免费实例当作长期存储。'
+            '请务必导出 TXT/CSV/HTML 备份；正式或比赛演示的企业数据请用本机一键启动。'
+            '公开示范写在应用代码中，唤醒后可重新载入；私有企业数据不会写入公开代码仓库。'
+            '公网 HTTPS 生产环境请设置 LTZS_COOKIE_SECURE=1，并配置 LTZS_PUBLIC_ORIGIN 为完整的 https 公网地址。'
         ),
     }
 
@@ -518,13 +540,17 @@ def session_info():
             'workspace_session：已验证会话 Cookie，可访问该所有者工作区；'
             'project_token：仅能访问该 Token 对应的单个项目；'
             'public_demo：公开示范或尚未授权的访客。'
+            '退出当前工作区只会撤销会话 Cookie，不会自动作废已发放的项目恢复凭证；如需作废请轮换或撤销该项目凭证。'
         ),
     }
 
 
 @app.post('/api/session/logout')
 def session_logout(request: Request, response: Response):
-    """主动注销：撤销当前会话全部票据，签发新的匿名会话。旧 SID+MAC 不可再恢复工作区。"""
+    """主动注销：撤销当前会话全部票据，签发新的匿名会话。旧 SID+MAC 不可再恢复工作区。
+
+    退出工作区不会自动撤销已发放的项目 Token。
+    """
     new_sid = store.revoke_session()
     _attach_session_cookies(response, new_sid, request)
     return {
@@ -533,7 +559,45 @@ def session_logout(request: Request, response: Response):
         'active': store.get_active_id(),
         'project_token': None,
         'auth_scope': store.current_auth_scope(),
-        'message': '已注销当前会话，之前的签名 Cookie 已失效。',
+        'message': '已退出当前工作区，此前的会话 Cookie 已失效。退出不会自动撤销已发放的项目恢复凭证；如需作废请使用「轮换/撤销项目凭证」。',
+        'token_revoked': False,
+    }
+
+
+@app.post('/api/session/project-token/rotate')
+def session_rotate_project_token():
+    """轮换当前项目恢复凭证：旧凭证立即失效，本会话获得新凭证。"""
+    try:
+        token = store.rotate_project_token()
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    return {
+        'ok': True,
+        'project_token': token,
+        'session_id': store.current_session_id(),
+        'active': store.get_active_id(),
+        'message': '已轮换当前项目恢复凭证，此前分享出去的旧凭证已失效。退出工作区不会自动做这次轮换。',
+    }
+
+
+@app.post('/api/session/project-token/revoke')
+def session_revoke_project_token():
+    """撤销当前项目已发放的恢复凭证。工作区会话仍可访问该项目；仅持有旧凭证的访问会失效。"""
+    try:
+        store.revoke_project_token()
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    return {
+        'ok': True,
+        'project_token': store.session_project_token(),
+        'session_id': store.current_session_id(),
+        'active': store.get_active_id(),
+        'auth_scope': store.current_auth_scope(),
+        'message': '已撤销此前发放的项目恢复凭证。若您仍在工作区会话中，可以继续编辑并再次轮换得到新凭证。',
     }
 
 

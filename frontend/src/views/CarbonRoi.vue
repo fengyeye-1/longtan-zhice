@@ -648,7 +648,8 @@ async function addMyQuote() {
       </label>
       <button class="btn" @click="runCompare">对比方案</button>
     </div>
-    <table class="data" v-if="compareResult">
+        <div class="table-scroll" v-if="compareResult">
+      <table class="data">
       <thead>
         <tr><th></th><th>方案 A</th><th>方案 B</th></tr>
       </thead>
@@ -661,6 +662,8 @@ async function addMyQuote() {
         <tr><th>预算</th><td>{{ budgetText(compareResult.A?.within_budget) }}</td><td>{{ budgetText(compareResult.B?.within_budget) }}</td></tr>
       </tbody>
     </table>
+      <p class="muted table-scroll-hint">宽表可左右滑动查看，避免文字被压成单字换行</p>
+    </div>
     <p class="notice" v-if="compareResult?.recommendation">说明：方案 {{ compareResult.recommendation.choice }} — {{ compareResult.recommendation.reason }}</p>
     <p class="warn" v-else-if="compareResult?.compare_only">{{ compareResult.compare_only_reason || compareResult.explanation || '目前只能比较节电与减碳，不能做经济回收期排名。' }}</p>
     <p class="muted" v-else-if="compareResult">投资未知时只比较、不推荐。</p>
@@ -679,7 +682,8 @@ async function addMyQuote() {
 
   <div class="section">
     <h2>同措施不同小时（2000 / 4000 / 6000 h）</h2>
-    <table class="data">
+        <div class="table-scroll">
+      <table class="data">
       <thead>
         <tr>
           <th>小时</th><th>节电 kWh</th><th>电力相关减排 tCO₂</th><th>节费 元</th><th>回收期</th>
@@ -695,6 +699,8 @@ async function addMyQuote() {
         </tr>
       </tbody>
     </table>
+      <p class="muted table-scroll-hint">宽表可左右滑动查看，避免文字被压成单字换行</p>
+    </div>
   </div>
 
   <MethodPanel :mill="mill" />

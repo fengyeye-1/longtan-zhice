@@ -126,8 +126,9 @@ onMounted(async () => {
 <style scoped>
 .device-card-list { display: none; gap: 10px; margin-bottom: 12px; }
 .device-card { border: 1px solid #E5E5E5; border-radius: 10px; padding: 12px; background: #fff; }
-.device-card-title { font-weight: 600; margin-bottom: 6px; }
+.device-card-title { font-weight: 600; margin-bottom: 6px; word-break: normal; overflow-wrap: break-word; }
 .device-card-meta { display: flex; flex-wrap: wrap; gap: 8px 12px; color: #555; font-size: 13px; }
+.device-card-meta > span { white-space: nowrap; }
 .table-scroll { overflow-x: auto; }
 .table-scroll-hint { display: none; font-size: 12px; }
 @media (max-width: 768px) {

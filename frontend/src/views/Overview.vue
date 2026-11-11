@@ -67,6 +67,8 @@ function costText() {
     <button class="btn secondary" @click="selectJinhui">切回金徽公开案例</button>
   </div>
 
+  <p class="muted">免费在线实例（如 SnapDeploy、Render）休眠或重新部署后，容器里的企业数据可能丢失。公开示范写在应用代码中，可点「体验公开案例」恢复；私有数据请用本机一键启动保存，并导出 TXT/CSV/HTML。不要把企业数据提交到公开代码仓库。</p>
+
   <div class="notice" v-if="state.results">
     <strong>{{ isDemo ? '正在查看：金徽矿业｜公开示例' : ('正在查看：' + state.results.case?.name) }}</strong>
     <span class="tag" style="margin-left:8px">{{ isDemo ? '公开资料' : '用户项目' }}</span>
@@ -154,7 +156,8 @@ function costText() {
 
   <div class="section" v-if="schemes.length && sa?.technology_type !== 'pump'">
     <h2>每年省电的时间不同，结果差多少？</h2>
-    <table class="data">
+        <div class="table-scroll">
+      <table class="data">
       <thead>
         <tr><th>有效小时（假设）</th><th>节电 kWh</th><th>电力相关减排 tCO₂</th><th>节费 元</th></tr>
       </thead>
@@ -167,6 +170,8 @@ function costText() {
         </tr>
       </tbody>
     </table>
+      <p class="muted table-scroll-hint">宽表可左右滑动查看，避免文字被压成单字换行</p>
+    </div>
   </div>
 
   <MethodPanel :mill="sa || mill" :defaults="state.results?.defaults" />
