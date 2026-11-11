@@ -5,6 +5,7 @@ CSV 的 schemes/methods/gaps/sources 必须有真实内容，不能只有表头�
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from .compute import build_report_text, full_recalculate, sanitize_csv_cell, render_csv_rows
@@ -473,6 +474,19 @@ def build_modular_csv(payload: dict | None = None, sections: list[str] | None = 
     return render_csv_rows(rows)
 
 
+def format_cover_number(value) -> str:
+    """封面/摘要数字用十进制可读形式，避免 :,.4g 把 80000 写成 8e+04。"""
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError('non-finite')
+    if abs(number - round(number)) < 1e-9 and abs(number) < 1e15:
+        return f'{int(round(number)):,}'
+    formatted = f'{number:,.6f}'.rstrip('0').rstrip('.')
+    if formatted in ('', '-', '-0'):
+        return '0'
+    return formatted
+
+
 def build_modular_html(payload: dict | None, sections: list[str] | None, text: str) -> str:
     """按所选章节渲染 HTML；不再总是夹带固定「一页结论」。"""
     import html as _html
@@ -491,7 +505,7 @@ def build_modular_html(payload: dict | None, sections: list[str] | None, text: s
         if v is None:
             return '尚待补充'
         try:
-            return f'{float(v):,.4g}{unit}'
+            return f'{format_cover_number(v)}{unit}'
         except Exception:
             return '尚待补充'
 

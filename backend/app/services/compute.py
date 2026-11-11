@@ -199,6 +199,16 @@ def _fmt_hours_zh(v: float) -> str:
     return f'{float(v):,.2f}'
 
 
+def _format_tariff_usage_line(value, source=None, *, is_reference: bool = False) -> str:
+    """电价展示行：有来源时写「元/kWh（来源）」；来源为空则不加空括号。不编造来源。"""
+    src = str(source or '').strip()
+    if is_reference:
+        src = src or '金徽参考电价（试算）'
+    if src:
+        return f"所用电价：{value} 元/kWh（{src}）"
+    return f"所用电价：{value} 元/kWh"
+
+
 def _format_scheme_txt_line(s: dict) -> str:
     """小时对照行：无效情景写明不适用，禁止输出 None kWh / None t 等程序占位。"""
     reason = s.get('inapplicable_reason') or (
@@ -2229,10 +2239,13 @@ def build_report_text(payload: dict | None = None, *, sections: list[str] | None
                 if sa.get('status') == 'partial' and sa.get('payback_message'):
                     lines.append(f"经济完整度说明：{sa.get('payback_message')}")
                 if tariff_info.get('value') is not None:
-                    src = tariff_info.get('source') or ''
-                    if tariff_info.get('is_reference'):
-                        src = src or '金徽参考电价（试算）'
-                    lines.append(f"所用电价：{tariff_info.get('value')} 元/kWh（{src}）")
+                    lines.append(
+                        _format_tariff_usage_line(
+                            tariff_info.get('value'),
+                            tariff_info.get('source'),
+                            is_reference=bool(tariff_info.get('is_reference')),
+                        )
+                    )
                 else:
                     lines.append('所用电价：尚未填写')
                 inv = sa.get('investment_cny')
