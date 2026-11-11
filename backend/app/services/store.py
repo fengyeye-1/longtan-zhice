@@ -1087,6 +1087,9 @@ def maybe_rotate_session_mac(sid: str, mac: str | None) -> str:
     """滑动刷新：已过半有效期则签发新票据并撤销旧票据。"""
     if not sid:
         return ""
+    # 已撤销、过期或校验失败的票据不得在本响应中续期或重新签发。
+    if not verify_session_mac(sid, mac):
+        return ""
     issued_at, _digest = _parse_session_mac(str(mac or ""))
     now = _now_ts()
     ttl = session_ttl_seconds()

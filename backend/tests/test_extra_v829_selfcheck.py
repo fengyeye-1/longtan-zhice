@@ -46,9 +46,9 @@ def _project(client: TestClient, name: str = "829测试企业"):
 def test_health_version_is_829():
     c = TestClient(app, raise_server_exceptions=False)
     h = c.get("/api/health").json()
-    assert h["version"] == "8.2.12" == APP_VERSION
-    assert h["frontend_expected"] == "8.2.12"
-    assert h["build_id"] == BUILD_ID == "v8212-audit-20261111"
+    assert h["version"] == "8.2.13" == APP_VERSION
+    assert h["frontend_expected"] == "8.2.13"
+    assert h["build_id"] == BUILD_ID == "v8213-audit-20261111"
     assert h.get("data_persistence") == "local_sqlite"
     note = h.get("data_persistence_note") or ""
     assert "本机" in note

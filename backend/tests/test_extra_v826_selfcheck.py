@@ -46,8 +46,8 @@ def csv_upload(c, h, kind, data):
 
 def test_health_version_is_826(c):
     h = c.get("/api/health").json()
-    assert h["version"] == "8.2.12" == APP_VERSION
-    assert h["frontend_expected"] == "8.2.12"
+    assert h["version"] == "8.2.13" == APP_VERSION
+    assert h["frontend_expected"] == "8.2.13"
     assert h["build_id"] == BUILD_ID
 
 

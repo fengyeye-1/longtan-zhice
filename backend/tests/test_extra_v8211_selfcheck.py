@@ -67,9 +67,9 @@ def _no_token_leak(resp, cid: str | None = None) -> None:
 def test_health_version_is_8211():
     c = TestClient(app, raise_server_exceptions=False)
     h = c.get("/api/health").json()
-    assert h["version"] == "8.2.12" == APP_VERSION
-    assert h["frontend_expected"] == "8.2.12"
-    assert h["build_id"] == BUILD_ID == "v8212-audit-20261111"
+    assert h["version"] == "8.2.13" == APP_VERSION
+    assert h["frontend_expected"] == "8.2.13"
+    assert h["build_id"] == BUILD_ID == "v8213-audit-20261111"
 
 
 def test_f01_guest_token_cannot_access_sibling_projects():

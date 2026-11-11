@@ -494,6 +494,28 @@ def _apply_scenario_to_case(case: CaseState, body: UpdateScenarioRequest) -> lis
     return errors
 
 
+def _init_request_session_state(request: Request, sid: str) -> None:
+    """父子任务共享的会话状态。Starlette BaseHTTPMiddleware 的 call_next 在子任务
+    中运行，ContextVar 的写入回不到父任务；request.state 则是同一对象。"""
+    request.state.ltzs_sid = sid
+    request.state.ltzs_cookies_attached = False
+    request.state.ltzs_session_revoked = False
+
+
+def _publish_request_session(
+    request: Request,
+    sid: str,
+    *,
+    cookies_attached: bool = False,
+    revoked: bool = False,
+) -> None:
+    request.state.ltzs_sid = sid
+    if cookies_attached:
+        request.state.ltzs_cookies_attached = True
+    if revoked:
+        request.state.ltzs_session_revoked = True
+
+
 @app.middleware('http')
 async def session_middleware(request: Request, call_next):
     if request.url.path.startswith('/api'):
@@ -514,17 +536,34 @@ async def session_middleware(request: Request, call_next):
             store.set_request_context(sid, token, cookie_verified=cookie_verified)
             return csrf_error
         sid = store.set_request_context(sid, token, cookie_verified=cookie_verified)
+        _init_request_session_state(request, sid)
         response = await call_next(request)
-        # 以路由执行后的会话为准（例如注销会轮换 SID），避免把已撤销票据再写回 Cookie。
-        sid = store.current_session_id() or sid
-        current_mac = cookie_mac if (cookie_verified and request.cookies.get('ltzs_sid') == sid) else None
-        _attach_session_cookies(response, sid, request, current_mac)
-        tok = store.session_project_token()
-        if tok:
-            response.headers['X-Project-Token'] = tok
-        else:
-            # 显式空串：前端可清掉旧 Token（如切回公开示范）
+        # 不得读取父任务 ContextVar 作为注销后的有效 SID：子任务里 revoke_session()
+        # 的 ContextVar 变更不会回传到这里，否则会把已撤销的旧 SID 再写成 Cookie，
+        # 并在续期窗口内为旧 SID 签发新的可验证票据。
+        effective_sid = getattr(request.state, 'ltzs_sid', None) or sid
+        cookies_attached = bool(getattr(request.state, 'ltzs_cookies_attached', False))
+        revoked = bool(getattr(request.state, 'ltzs_session_revoked', False))
+        if not cookies_attached:
+            # 仅当有效 SID 仍是本请求已校验的入站 Cookie，且本请求未注销时，才允许续期。
+            current_mac = None
+            if (
+                cookie_verified
+                and not revoked
+                and request.cookies.get('ltzs_sid') == effective_sid
+            ):
+                current_mac = cookie_mac
+            _attach_session_cookies(response, effective_sid, request, current_mac)
+        if revoked:
+            # 注销后不要再走父任务 ContextVar 读 Token：那会按旧 SID 复活内存会话。
             response.headers['X-Project-Token'] = ''
+        else:
+            tok = store.session_project_token()
+            if tok:
+                response.headers['X-Project-Token'] = tok
+            else:
+                # 显式空串：前端可清掉旧 Token（如切回公开示范）
+                response.headers['X-Project-Token'] = ''
         return response
     return await call_next(request)
 
@@ -578,6 +617,9 @@ def session_logout(request: Request, response: Response):
     退出工作区不会自动撤销已发放的项目 Token。
     """
     new_sid = store.revoke_session()
+    # 把注销后的 SID 写到 request.state，供外层中间件读取；并由本路由唯一下发 Cookie，
+    # 避免中间件再附加一对互相冲突的 Set-Cookie。
+    _publish_request_session(request, new_sid, cookies_attached=True, revoked=True)
     _attach_session_cookies(response, new_sid, request)
     return {
         'ok': True,

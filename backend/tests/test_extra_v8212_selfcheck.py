@@ -1,4 +1,4 @@
-"""V8.2.12 报告展示自检：空电价来源不加空括号，封面数字不用科学计数法。"""
+"""V8.2.13 报告展示自检：空电价来源不加空括号，封面数字不用科学计数法。"""
 from __future__ import annotations
 
 import re
@@ -14,6 +14,28 @@ from app.version import APP_VERSION, BUILD_ID
 
 INAPPLICABLE = "超过该设备可用运行小时，不适用"
 SCI_RE = re.compile(r"(?i)(?<![A-Za-z0-9_])\d+(?:\.\d+)?e[+-]?\d+")
+# 报告里的随机实体 ID（如 measure=rf-...3e9...、rf-4114e87942...）可能被误判为科学计数法。
+# 判定前先去掉 case=/device=/measure= 以及 rf-/dev-/case- 标识，只检查剩余展示文本。
+_ENTITY_ID_RE = re.compile(
+    r"(?i)\b(?:case|device|measure)\s*=\s*[A-Za-z0-9_-]+"
+    r"|\b(?:rf|dev|case)-[A-Za-z0-9_-]+"
+)
+
+
+def _text_without_entity_ids(text: str) -> str:
+    return _ENTITY_ID_RE.sub(" ", text)
+
+
+def _display_fragments(text: str) -> str:
+    """HTML 封面字段、省电/节费等数值行，以及去掉实体 ID 后的全文。"""
+    parts: list[str] = []
+    parts.extend(re.findall(r"<td>[^<]*</td>", text))
+    keys = ("省电", "节费", "节约电费", "所用电价", "减排", "kWh", "tCO2", "元/kWh")
+    for line in text.splitlines():
+        if any(k in line for k in keys):
+            parts.append(line)
+    parts.append(_text_without_entity_ids(text))
+    return "\n".join(parts)
 
 
 @pytest.fixture(autouse=True)
@@ -74,11 +96,13 @@ def _assert_no_bad_placeholders(text: str) -> None:
     assert "None tCO2" not in text
     assert "元/kWh（）" not in text
     assert "NaN" not in text
+    # 真实展示错误仍按全文检查（含加号的 8e+04 不会出现在十六进制 ID 中）。
     assert "8e+04" not in text
     assert "8e+4" not in text
     assert "8E+04" not in text
     assert "8E+4" not in text
-    assert not SCI_RE.search(text), f"scientific notation in report: {SCI_RE.findall(text)}"
+    scanned = _display_fragments(text)
+    assert not SCI_RE.search(scanned), f"scientific notation in report: {SCI_RE.findall(scanned)}"
 
 
 def _cover_kwh(html: str) -> str:
@@ -90,9 +114,9 @@ def _cover_kwh(html: str) -> str:
 def test_health_version_is_8212():
     c = TestClient(app, raise_server_exceptions=False)
     h = c.get("/api/health").json()
-    assert h["version"] == "8.2.12" == APP_VERSION
-    assert h["frontend_expected"] == "8.2.12"
-    assert h["build_id"] == BUILD_ID == "v8212-audit-20261111"
+    assert h["version"] == "8.2.13" == APP_VERSION
+    assert h["frontend_expected"] == "8.2.13"
+    assert h["build_id"] == BUILD_ID == "v8213-audit-20261111"
 
 
 def test_format_helpers_price_parens_and_cover_numbers():

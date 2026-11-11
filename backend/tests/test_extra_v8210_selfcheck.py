@@ -59,9 +59,9 @@ def _csrf_rejected(res):
 def test_health_version_is_8210():
     c = TestClient(app, raise_server_exceptions=False)
     h = c.get("/api/health").json()
-    assert h["version"] == "8.2.12" == APP_VERSION
-    assert h["frontend_expected"] == "8.2.12"
-    assert h["build_id"] == BUILD_ID == "v8212-audit-20261111"
+    assert h["version"] == "8.2.13" == APP_VERSION
+    assert h["frontend_expected"] == "8.2.13"
+    assert h["build_id"] == BUILD_ID == "v8213-audit-20261111"
 
 
 def test_proxy_http_cross_scheme_origin_rejected_on_reset_demo():
